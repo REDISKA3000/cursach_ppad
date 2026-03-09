@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор адаптивных резюме - MVP</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🚀 Генератор адаптивных резюме</h1>
+            <p>Персональный карьерный консультант на базе мультиагентной ИИ-системы</p>
+            <div class="model-status-bar">
+                <span id="model-status" style="font-weight: bold;">Loading...</span>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- Left Panel: Chat Interface -->
+            <div class="panel chat-panel">
+                <h2>💬 Ассистент</h2>
+                <div class="messages-container" id="messages">
+                    <div class="message system-message">
+                        <strong>Система:</strong> Добро пожаловать! Вставьте текст вашего резюме или загрузите TXT файл для начала работы.
+                    </div>
+                </div>
+                <div class="input-area">
+                    <textarea id="user-input" placeholder="Вставьте текст резюме здесь..." rows="4"></textarea>
+                    
+                    <div class="button-group">
+                        <button class="btn btn-primary" onclick="sendMessage()">Отправить</button>
+                        <button class="btn btn-secondary" onclick="triggerFileUpload()">Загрузить TXT</button>
+                        <input type="file" id="file-input" style="display: none;" accept=".txt,.pdf,.docx" onchange="uploadFile()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle Panel: Intermediate Data -->
+            <div class="panel data-panel">
+                <h2>📊 Данные анализа</h2>
+                
+                <div class="data-section">
+                    <h3>
+                        <span class="toggle" onclick="toggleSection('candidate-section')">▼</span>
+                        Профиль кандидата
+                        <button class="btn btn-small" onclick="downloadCandidateJSON()" title="Скачать JSON">📥 JSON</button>
+                    </h3>
+                    <div id="candidate-section" class="json-display">
+                        <pre id="candidate-json">-</pre>
+                    </div>
+                </div>
+
+                <div class="data-section">
+                    <h3>
+                        <span class="toggle" onclick="toggleSection('vacancy-section')">▶</span>
+                        Профиль вакансии
+                        <button class="btn btn-small" onclick="downloadVacancyJSON()" title="Скачать JSON">📥 JSON</button>
+                    </h3>
+                    <div id="vacancy-section" class="json-display" style="display: none;">
+                        <pre id="vacancy-json">-</pre>
+                    </div>
+                </div>
+
+                <div class="data-section">
+                    <h3>
+                        <span class="toggle" onclick="toggleSection('strategy-section')">▶</span>
+                        Стратегия адаптации
+                        <button class="btn btn-small" onclick="downloadStrategyJSON()" title="Скачать JSON">📥 JSON</button>
+                    </h3>
+                    <div id="strategy-section" class="json-display" style="display: none;">
+                        <pre id="strategy-json">-</pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Results -->
+            <div class="panel result-panel">
+                <h2>📄 Сгенерированное резюме</h2>
+                
+                <div id="resume-content" class="resume-display">
+                    <p class="placeholder">Резюме появится здесь после генерации</p>
+                </div>
+
+                <div id="tech-report" class="tech-report" style="display: none;">
+                    <h3>
+                        Технический отчёт
+                        <button class="btn btn-small" onclick="downloadTechReportJSON()" title="Скачать JSON">📥 JSON</button>
+                    </h3>
+                    <pre id="tech-report-json">-</pre>
+                </div>
+
+                <div class="action-buttons" id="export-buttons" style="display: none;">
+                    <button class="btn btn-success" onclick="downloadTxt()">⬇ Скачать TXT</button>
+                    <button class="btn btn-success" onclick="downloadPdf()">⬇ Скачать PDF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vacancy Input Section -->
+        <div class="panel vacancy-panel">
+            <h2>💼 Описание вакансии</h2>
+            <textarea id="vacancy-input" placeholder="Вставьте текст вакансии здесь..." rows="4"></textarea>
+            <button class="btn btn-primary" onclick="processVacancy()">Анализировать вакансию</button>
+        </div>
+
+        <!-- Previous Resumes -->
+        <div class="panel resumes-panel">
+            <h2>📋 Ранее сгенерированные резюме</h2>
+            <div id="resumes-list" class="resumes-list">
+                <p class="placeholder">Нет ранее сгенерированных резюме</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

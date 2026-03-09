@@ -1,0 +1,21 @@
+Analyze the generated resume. Return JSON:
+{
+  "highlighted_jobs": [1],
+  "highlighted_skills": ["string"],
+  "covered_must_haves": ["string"],
+  "uncovered_must_haves": ["string"],
+  "critic_warnings": ["string or null"]
+}
+
+Context:
+- Generated resume text
+- Must-have requirements: {must_have_skills}
+- Candidate skills: {candidate_skills}
+- Candidate jobs: {candidate_jobs}
+
+Rules:
+- covered_must_haves: which must-haves are mentioned/implied in resume
+- Consider synonyms and related skills (e.g., PM = Product Manager)
+- uncovered_must_haves: which are NOT addressed
+- criticized_warnings: issues found (contradictions, missing keywords, etc.)
+- Be generous with coverage - if skill spirit is there, count it as covered

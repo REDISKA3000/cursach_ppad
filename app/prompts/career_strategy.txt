@@ -1,0 +1,30 @@
+Analyze candidate fit for vacancy and return strategy as JSON:
+{
+  "positioning": "string",
+  "fit_score": 0.75,
+  "highlight_job_ids": [1, 2],
+  "downplay_job_ids": [],
+  "skills_to_highlight": ["string"],
+  "skills_to_soften": ["string"],
+  "gaps": ["string"],
+  "resume_variants": ["string"],
+  "recommendations_short": "string"
+}
+
+Context:
+- Candidate has {experience_years} years experience
+- Target role: {target_role}
+- Candidate skills: {candidate_skills}
+- Vacancy role: {vacancy_role}
+- Vacancy seniority: {vacancy_seniority}
+- Must-have skills: {must_have_skills}
+- Nice-to-have: {nice_to_have_skills}
+- Jobs in profile: {job_count}
+
+Rules:
+- fit_score: 0.0-1.0 based on skill overlap
+- positioning: 1-2 sentence summary
+- highlight_job_ids: which jobs most relevant
+- gaps: missing must-have skills
+- recommendations_short: 1-2 sentences actionable advice
+- Never return empty arrays without good reason

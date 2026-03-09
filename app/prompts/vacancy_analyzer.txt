@@ -1,0 +1,23 @@
+Extract job posting details. Return ONLY valid JSON:
+{
+  "role": "string or null",
+  "seniority": "string or null",
+  "industry": "string or null",
+  "must_have_skills": ["string"],
+  "nice_to_have_skills": ["string"],
+  "key_responsibilities": ["string"],
+  "keywords_for_ats": ["string"],
+  "raw_warnings": ["string"]
+}
+
+IMPORTANT:
+- Extract from explicit "Requirements" or "Must have" sections
+- Nice-to-have from separate sections
+- Role should be clean job title
+- Seniority: Junior, Middle, Senior, Lead, Manager
+- Industry: Financial, Tech, Healthcare, etc.
+- Keep warnings for unclear requirements
+- Do not hallucinate requirements
+
+Job posting:
+{vacancy_text}

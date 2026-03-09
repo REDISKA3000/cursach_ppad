@@ -1,0 +1,40 @@
+Extract candidate profile from this resume. Return ONLY valid JSON matching this structure:
+{
+  "target_role": "string or null",
+  "experience_years": "number or null",
+  "summary_raw": "string or null",
+  "jobs": [
+    {
+      "id": 1,
+      "company_name": "string or null",
+      "company_type": "string or null",
+      "position": "string or null",
+      "period": "string or null",
+      "responsibilities": ["string"],
+      "achievements": ["string"],
+      "skills_used": ["string"]
+    }
+  ],
+  "skills_hard": ["string"],
+  "skills_soft": ["string"],
+  "education": [
+    {
+      "institution": "string or null",
+      "degree": "string or null",
+      "year": "string or null"
+    }
+  ],
+  "languages": ["string"],
+  "certifications": ["string"],
+  "raw_warnings": ["string"]
+}
+
+IMPORTANT RULES:
+- Extract ONLY facts from the resume
+- Never invent companies, positions, or achievements
+- If data is missing, use null or empty array
+- Keep warnings for ambiguous data
+- Do not hallucinate
+
+Resume text:
+{resume_text}
