@@ -1,24 +1,76 @@
-"""Resume generation API routes"""
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
-from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy.orm import Session
-import json
+import logging
 import os
-from typing import Optional
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+from app.config import UPLOADS_DIR, EXPORTS_DIR
 from app.db import get_db
-from app.repositories.users import UserRepository
 from app.repositories.conversations import ConversationRepository
 from app.repositories.resumes import ResumeRepository
-from app.services.orchestration import OrchestrationService
-from app.services.file_parser import FileParser
+from app.repositories.users import UserRepository
 from app.services.export_service import ExportService
-from app.config import UPLOADS_DIR, EXPORTS_DIR
-import logging
-import uuid
+from app.services.file_parser import FileParser
+from app.services.orchestration import OrchestrationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 orchestration = OrchestrationService()
+
+_TECHNICAL_WARNING_MARKERS = (
+    "badrequest",
+    "retryerror",
+    "fallback used",
+    "exception fallback",
+    "profile extracted using hh.ru parsing",
+    "profile extracted using section-based parsing",
+)
+
+
+def _get_or_create_demo_context(db: Session) -> tuple[int, int]:
+    """Create the demo user and an active conversation when needed."""
+    user = UserRepository.get_or_create_demo_user(db)
+    conversations = ConversationRepository.get_user_conversations(db, user.id)
+    conversation = conversations[0] if conversations else ConversationRepository.create_conversation(db, user.id)
+    return user.id, conversation.id
+
+
+def _sanitize_user_warnings(warnings: list[str]) -> list[str]:
+    sanitized = []
+    for warning in warnings or []:
+        text = str(warning).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in _TECHNICAL_WARNING_MARKERS):
+            continue
+        sanitized.append(text)
+    return sanitized
+
+
+def _candidate_profile_payload(profile) -> dict:
+    payload = profile.model_dump()
+    payload["raw_warnings"] = _sanitize_user_warnings(profile.raw_warnings)
+    return payload
+
+
+def _vacancy_profile_payload(profile) -> dict:
+    payload = profile.model_dump()
+    payload["raw_warnings"] = _sanitize_user_warnings(profile.raw_warnings)
+    return payload
+
+
+@router.get("/api/session/bootstrap")
+async def bootstrap_session(db: Session = Depends(get_db)):
+    """Bootstrap demo user and conversation for the frontend flow."""
+    user_id, conversation_id = _get_or_create_demo_context(db)
+    return {
+        "status": "ok",
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+    }
 
 @router.post("/api/upload-resume")
 async def upload_resume(
@@ -54,15 +106,88 @@ async def upload_resume(
             f"Загружен файл: {file.filename}"
         )
         
+        candidate_payload = _candidate_profile_payload(candidate_profile)
+
         return {
             "status": "ok",
-            "resume_text": resume_text[:500],  # Return snippet
-            "candidate_profile": candidate_profile.model_dump(),
-            "warnings": candidate_profile.raw_warnings,
+            "resume_text": resume_text,
+            "resume_excerpt": resume_text[:500],
+            "candidate_profile": candidate_payload,
+            "warnings": candidate_payload["raw_warnings"],
             "questions": orchestration.get_clarifying_questions(candidate_profile)
         }
     except Exception as e:
         logger.error(f"Error uploading resume: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/analyze/resume-text")
+async def analyze_resume_text(
+    resume_text: str = Form(...),
+    conversation_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Analyze pasted resume text without requiring file upload."""
+    try:
+        candidate_profile = orchestration.process_resume(resume_text)
+
+        ConversationRepository.add_message(
+            db,
+            conversation_id,
+            "system",
+            "Резюме проанализировано из текстового ввода"
+        )
+
+        candidate_payload = _candidate_profile_payload(candidate_profile)
+
+        return {
+            "status": "ok",
+            "resume_text": resume_text,
+            "candidate_profile": candidate_payload,
+            "warnings": candidate_payload["raw_warnings"],
+            "questions": orchestration.get_clarifying_questions(candidate_profile),
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing resume text: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/analyze/preview")
+async def analyze_preview(
+    resume_text: str = Form(...),
+    vacancy_text: str = Form(...),
+    conversation_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Return intermediate profiles and strategy before final resume generation."""
+    try:
+        candidate_profile = orchestration.process_resume(resume_text)
+        vacancy_profile = orchestration.process_vacancy(vacancy_text)
+        strategy_brief = orchestration.build_strategy(candidate_profile, vacancy_profile)
+
+        ConversationRepository.add_message(
+            db,
+            conversation_id,
+            "system",
+            "Подготовлен промежуточный анализ резюме и вакансии"
+        )
+
+        candidate_payload = _candidate_profile_payload(candidate_profile)
+        vacancy_payload = _vacancy_profile_payload(vacancy_profile)
+
+        return {
+            "status": "ok",
+            "candidate_profile": candidate_payload,
+            "vacancy_profile": vacancy_payload,
+            "strategy_brief": strategy_brief.model_dump(),
+            "warnings": {
+                "candidate": candidate_payload["raw_warnings"],
+                "vacancy": vacancy_payload["raw_warnings"],
+            },
+            "questions": orchestration.get_clarifying_questions(candidate_profile),
+        }
+    except Exception as e:
+        logger.error(f"Error generating preview: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/api/generate/full")
@@ -104,11 +229,14 @@ async def generate_resume_full(
             f"Сгенерировано резюме #{resume_gen.id}"
         )
         
+        candidate_payload = _candidate_profile_payload(candidate_profile)
+        vacancy_payload = _vacancy_profile_payload(vacancy_profile)
+
         return {
             "status": "ok",
             "resume_id": resume_gen.id,
-            "candidate_profile": candidate_profile.model_dump(),
-            "vacancy_profile": vacancy_profile.model_dump(),
+            "candidate_profile": candidate_payload,
+            "vacancy_profile": vacancy_payload,
             "strategy_brief": strategy_brief.model_dump(),
             "generated_resume": {
                 "title": generated_resume.title,
@@ -223,6 +351,6 @@ async def get_model_info():
         "provider": provider.name,
         "model": OPENAI_MODEL,
         "enabled": provider.enabled,
-        "status": f"🟢 OpenAI ({OPENAI_MODEL})" if provider.enabled else "🟡 Mock LLM (fallback)",
+        "status": "",
         "api_key_present": bool(OPENAI_API_KEY),
     }

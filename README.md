@@ -116,7 +116,7 @@ python run.py
 Если настроить `.env`:
 ```env
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4-turbo
+OPENAI_MODEL=gpt-5.4-mini
 OPENAI_ENABLED=true
 ```
 

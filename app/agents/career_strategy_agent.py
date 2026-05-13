@@ -5,6 +5,7 @@ from app.schemas.candidate import CandidateProfile
 from app.schemas.vacancy import VacancyProfile
 from app.schemas.strategy import StrategyBrief
 from app.services.llm_provider import get_llm_provider
+from app.services.career_strategy_stage import build_fallback_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +31,12 @@ class CareerStrategyAgent:
         """
         try:
             strategy = self.llm.build_strategy(candidate_profile, vacancy_profile, candidate_preferences)
-            
-            # Additional logic
             self._validate_strategy(strategy, candidate_profile, vacancy_profile)
-            
             return strategy
         except Exception as e:
             logger.error(f"Error building strategy: {e}")
-            # Use evasive fallback instead of returning empty object
-            return self._create_evasive_fallback(candidate_profile, vacancy_profile)
-    
+            return self._create_evasive_fallback(candidate_profile, vacancy_profile, str(e))
+
     def _validate_strategy(
         self,
         strategy: StrategyBrief,
@@ -63,37 +60,18 @@ class CareerStrategyAgent:
     def _create_evasive_fallback(
         self,
         candidate_profile: CandidateProfile,
-        vacancy_profile: VacancyProfile
+        vacancy_profile: VacancyProfile,
+        reason: str = "",
     ) -> StrategyBrief:
-        """Create non-empty fallback strategy using available methods"""
-        
-        fit_score = self.calculate_fit_score(
-            candidate_profile.skills_hard,
-            vacancy_profile.must_have_skills,
-            vacancy_profile.nice_to_have_skills,
-            candidate_profile.experience_years
+        """Create evidence-based fallback even when upstream LLM failed."""
+        strategy = build_fallback_strategy(
+            candidate_profile,
+            vacancy_profile,
+            reason=reason or "agent exception",
         )
-        
-        gaps = self.identify_gaps(
-            candidate_profile.skills_hard,
-            vacancy_profile.must_have_skills
-        )
-        
-        # Select first 3 jobs to highlight
-        highlight_ids = [job.id for job in candidate_profile.jobs[:3]]
-        
-        return StrategyBrief(
-            positioning="Leveraging relevant skills and experience",
-            fit_score=fit_score,
-            highlight_job_ids=highlight_ids,
-            downplay_job_ids=[],
-            skills_to_highlight=candidate_profile.skills_hard[:5],
-            skills_to_soften=[],
-            gaps=gaps,
-            resume_variants=["Standard format"],
-            recommendations_short="Highlight core competencies matching job requirements"
-        )
-    
+        self._validate_strategy(strategy, candidate_profile, vacancy_profile)
+        return strategy
+
     def calculate_fit_score(
         self,
         candidate_skills: list,

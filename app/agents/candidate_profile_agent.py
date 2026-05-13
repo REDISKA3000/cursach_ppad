@@ -1,6 +1,7 @@
 """Candidate Profile Agent"""
 import logging
 from app.schemas.candidate import CandidateProfile
+from app.services.candidate_profile_stage import build_follow_up_questions
 from app.services.llm_provider import get_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ class CandidateProfileAgent:
         """
         if not resume_text or not resume_text.strip():
             profile = CandidateProfile()
-            profile.raw_warnings.append("Empty resume provided")
+            profile.raw_warnings.append("Резюме не заполнено.")
             return profile
         
         try:
@@ -26,15 +27,15 @@ class CandidateProfileAgent:
             
             # Validation
             if not profile.jobs:
-                profile.raw_warnings.append("No jobs detected in resume. Please ensure work experience is included.")
+                profile.raw_warnings.append("Не удалось уверенно выделить опыт работы. Проверьте, что компании, должности и даты указаны явно.")
             if not profile.skills_hard:
-                profile.raw_warnings.append("No technical skills detected. Please list your technical skills.")
+                profile.raw_warnings.append("Не удалось уверенно выделить профессиональные навыки. Проверьте, что навыки указаны отдельным разделом.")
             
             return profile
         except Exception as e:
             logger.error(f"Error parsing resume: {e}")
             profile = CandidateProfile()
-            profile.raw_warnings.append(f"Error processing resume: {str(e)}")
+            profile.raw_warnings.append(f"Ошибка обработки резюме: {str(e)}")
             return profile
     
     def merge_with_answers(self, profile: CandidateProfile, answers: dict) -> CandidateProfile:
@@ -78,21 +79,4 @@ class CandidateProfileAgent:
     
     def get_clarifying_questions(self, profile: CandidateProfile) -> list:
         """Generate clarifying questions based on missing fields"""
-        questions = []
-        
-        if not profile.target_role:
-            questions.append("What role are you targeting?")
-        
-        if not profile.experience_years or profile.experience_years == 0:
-            questions.append("How many years of experience do you have?")
-        
-        if not any("lead" in skill.lower() or "manager" in skill.lower() for skill in profile.skills_soft):
-            questions.append("Do you have experience in a management or leadership role?")
-        
-        if not profile.education:
-            questions.append("What is your educational background?")
-        
-        if not profile.languages or len(profile.languages) == 0:
-            questions.append("What languages do you speak fluently?")
-        
-        return questions[:5]  # Return max 5 questions
+        return build_follow_up_questions(profile)

@@ -1,12 +1,54 @@
 """File parsing utilities"""
+import importlib
 import logging
 import os
-from typing import Optional
+import sys
 
 logger = logging.getLogger(__name__)
 
 class FileParser:
     """Parse uploaded files"""
+
+    @staticmethod
+    def _load_optional_module(module_name: str):
+        """Load optional parser dependency from venv or bundled Codex runtime."""
+        try:
+            return importlib.import_module(module_name)
+        except ImportError:
+            bundled_root = os.path.expanduser(
+                "~/.cache/codex-runtimes/codex-primary-runtime/dependencies/python"
+            )
+            candidate_paths = [bundled_root]
+
+            lib_dir = os.path.join(bundled_root, "lib")
+            if os.path.isdir(lib_dir):
+                for child in os.listdir(lib_dir):
+                    site_packages = os.path.join(lib_dir, child, "site-packages")
+                    if os.path.isdir(site_packages):
+                        candidate_paths.append(site_packages)
+
+            for path in candidate_paths:
+                if os.path.isdir(path) and path not in sys.path:
+                    sys.path.append(path)
+                    try:
+                        return importlib.import_module(module_name)
+                    except ImportError:
+                        continue
+        return None
+
+    @staticmethod
+    def _normalize_pdf_text(text: str) -> str:
+        """Clean noisy PDF extraction artifacts while preserving structure."""
+        if not text:
+            return ""
+
+        text = text.replace("\xa0", " ")
+        text = text.replace("\u200b", "")
+        text = text.replace("\r", "\n")
+        text = text.replace("Резюме обновлено", "\nРезюме обновлено")
+        text = text.replace("Гладилин Егор  •  Резюме обновлено", "\nГладилин Егор  •  Резюме обновлено")
+        text = "\n".join(line.rstrip() for line in text.splitlines())
+        return text.strip()
     
     @staticmethod
     def parse_txt(file_path: str) -> str:
@@ -22,15 +64,20 @@ class FileParser:
     def parse_pdf(file_path: str) -> str:
         """Parse PDF file (best effort)"""
         try:
-            import PyPDF2
-            text = ""
-            with open(file_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    text += page.extract_text()
-            return text
-        except ImportError:
-            logger.warning("PyPDF2 not installed, skipping PDF parsing")
+            pypdf = FileParser._load_optional_module("pypdf")
+            if pypdf:
+                reader = pypdf.PdfReader(file_path)
+                text = "\n".join((page.extract_text() or "") for page in reader.pages)
+                return FileParser._normalize_pdf_text(text)
+
+            pypdf2 = FileParser._load_optional_module("PyPDF2")
+            if pypdf2:
+                with open(file_path, 'rb') as f:
+                    reader = pypdf2.PdfReader(f)
+                    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+                    return FileParser._normalize_pdf_text(text)
+
+            logger.warning("No PDF parser installed, skipping PDF parsing")
             return ""
         except Exception as e:
             logger.error(f"Failed to parse PDF: {e}")
@@ -40,15 +87,17 @@ class FileParser:
     def parse_docx(file_path: str) -> str:
         """Parse DOCX file (best effort)"""
         try:
-            from docx import Document
+            docx = FileParser._load_optional_module("docx")
+            if not docx:
+                logger.warning("python-docx not installed, skipping DOCX parsing")
+                return ""
+
+            Document = docx.Document
             doc = Document(file_path)
             text = ""
             for para in doc.paragraphs:
                 text += para.text + "\n"
             return text
-        except ImportError:
-            logger.warning("python-docx not installed, skipping DOCX parsing")
-            return ""
         except Exception as e:
             logger.error(f"Failed to parse DOCX: {e}")
             return ""

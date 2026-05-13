@@ -13,10 +13,23 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-turbo")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+CANDIDATE_PROFILE_MODEL = os.getenv("CANDIDATE_PROFILE_MODEL", "gpt-5.4-mini")
+VACANCY_ANALYZER_MODEL = os.getenv("VACANCY_ANALYZER_MODEL", "gpt-5.4-mini")
+CAREER_STRATEGY_MODEL = os.getenv("CAREER_STRATEGY_MODEL", "gpt-5.4")
+RESUME_WRITER_MODEL = os.getenv("RESUME_WRITER_MODEL", "gpt-5.4")
+RESUME_CRITIC_MODEL = os.getenv("RESUME_CRITIC_MODEL", "gpt-5.4")
 OPENAI_ENABLED = os.getenv("OPENAI_ENABLED", "false").lower() == "true" and bool(OPENAI_API_KEY)
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "60"))
 OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+
+# CandidateProfile evidence experiment.
+# false = keep LLM evidence as final evidence with soft cleanup only.
+# true = validate LLM evidence against detected source blocks and use bounded fallback.
+CANDIDATE_EVIDENCE_VALIDATION_ENABLED = os.getenv(
+    "CANDIDATE_EVIDENCE_VALIDATION_ENABLED",
+    "false",
+).lower() == "true"
 
 # Paths
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

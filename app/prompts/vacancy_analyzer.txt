@@ -1,23 +1,62 @@
-Extract job posting details. Return ONLY valid JSON:
-{
-  "role": "string or null",
-  "seniority": "string or null",
-  "industry": "string or null",
-  "must_have_skills": ["string"],
-  "nice_to_have_skills": ["string"],
-  "key_responsibilities": ["string"],
-  "keywords_for_ats": ["string"],
-  "raw_warnings": ["string"]
-}
+Extract a structured vacancy profile from the job posting.
 
-IMPORTANT:
-- Extract from explicit "Requirements" or "Must have" sections
-- Nice-to-have from separate sections
-- Role should be clean job title
-- Seniority: Junior, Middle, Senior, Lead, Manager
-- Industry: Financial, Tech, Healthcare, etc.
-- Keep warnings for unclear requirements
-- Do not hallucinate requirements
+Return ONLY the section-based format below.
+Do not return JSON.
+Do not add commentary before or after the sections.
+Do not omit sections. If a value is unclear, leave the section blank or add a short warning.
 
-Job posting:
+[ROLE]
+...
+
+[SENIORITY]
+...
+
+[INDUSTRY]
+...
+
+[MUST_HAVE]
+- ...
+- ...
+
+[NICE_TO_HAVE]
+- ...
+- ...
+
+[RESPONSIBILITIES]
+- ...
+- ...
+
+[ATS_KEYWORDS]
+keyword1; keyword2; keyword3
+
+[WARNINGS]
+- ...
+- ...
+
+Extraction rules:
+- Extract only facts and requirements present in the vacancy text.
+- Do not hallucinate requirements, tools, responsibilities, benefits, company facts, or seniority.
+- ROLE must be a clean job title, not salary, schedule, location, or employment type.
+- SENIORITY must be one of: Junior, Middle, Senior, Lead, Manager. Leave blank if unclear.
+- INDUSTRY should be short and normalized, for example: Banking, FinTech, Payments, Retail / E-commerce, Software / SaaS, Marketing, Telecom, Consulting. Leave blank if unclear.
+- MUST_HAVE = real hiring filters: core hard skills, core tools/stack, mandatory relevant experience, mandatory domain experience, mandatory role experience, or mandatory profile education.
+- NICE_TO_HAVE = only explicit preferred/plus/advantage/bonus requirements, secondary tools, optional stack, or non-mandatory experience.
+- Do not overfill MUST_HAVE with generic low-signal traits when stronger requirements exist.
+- Do not put generic phrases like "уверенное пользование компьютером", "коммуникабельность", "стрессоустойчивость", "аккуратность", "готовность работать в команде" into MUST_HAVE unless the vacancy has almost no other requirements.
+- Keep mandatory experience requirements, for example "опыт от 1 года", "опыт в банках/МФО", "опыт в роли риск-аналитика", in MUST_HAVE.
+- If a line says "бонусом", "будет плюсом", "желательно", "advantage", put those items in NICE_TO_HAVE even if they are tools.
+- RESPONSIBILITIES = what the person will do, as short factual bullet lines.
+- ATS_KEYWORDS = concise role-relevant keywords from role, skills, requirements, and responsibilities. Use semicolon-separated terms.
+- WARNINGS = only real extraction uncertainty, not generic disclaimers.
+
+HH-like / Russian vacancy rules:
+- Treat sections like "Требования", "Наши пожелания", "Что важно для нас", "ТЫ ТОЧНО СПРАВИШЬСЯ, ЕСЛИ" as requirements.
+- Treat sections like "Будет плюсом", "Будет преимуществом", "Желательно" as nice-to-have.
+- Treat sections like "Чем предстоит заниматься", "Задачи", "Обязанности", "Ключевые задачи" as responsibilities.
+- Treat sections like "Что мы предлагаем", "Мы предлагаем", "Условия" as benefits/perks; do not extract perks into must-have.
+- "Опыт работы: 1–3 года" may imply Middle.
+- "Опыт работы: 3–6 лет" may imply Senior depending on role context.
+- If seniority is still uncertain, leave [SENIORITY] blank and add a warning.
+
+Vacancy text:
 {vacancy_text}

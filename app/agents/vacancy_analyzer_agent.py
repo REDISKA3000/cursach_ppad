@@ -1,7 +1,10 @@
 """Vacancy Analyzer Agent"""
 import logging
+from typing import Optional
+
 from app.schemas.vacancy import VacancyProfile
 from app.services.llm_provider import get_llm_provider
+from app.services.vacancy_analyzer_stage import normalize_vacancy_profile
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,7 @@ class VacancyAnalyzerAgent:
             return profile
         
         try:
-            profile = self.llm.parse_vacancy(vacancy_text)
+            profile = normalize_vacancy_profile(self.llm.parse_vacancy(vacancy_text), vacancy_text)
             
             # Postprocessing: Fill missing data
             if not profile.seniority:
@@ -48,13 +51,14 @@ class VacancyAnalyzerAgent:
             profile.raw_warnings.append(f"Error processing vacancy: {str(e)}")
             return profile
     
-    def extract_role_level(self, vacancy_text: str) -> str:
+    def extract_role_level(self, vacancy_text: str) -> Optional[str]:
         """Infer seniority level"""
         seniority_keywords = {
-            "junior": ["junior", "entry", "entry-level", "fresh"],
-            "mid": ["mid-level", "mid level", "intermediate", "3-5 years"],
-            "senior": ["senior", "lead", "principal", "staff", "5+ years", "7+ years"],
-            "manager": ["manager", "lead", "director", "head of"]
+            "Junior": ["junior", "entry", "entry-level", "fresh", "джун", "джуниор"],
+            "Middle": ["middle", "mid-level", "mid level", "intermediate", "1–3 года", "1-3 года", "3-5 years"],
+            "Senior": ["senior", "principal", "staff", "3–6 лет", "3-6 лет", "5+ years", "7+ years"],
+            "Lead": ["lead", "лид", "ведущий"],
+            "Manager": ["manager", "director", "head of", "руководитель", "управляющий"]
         }
         
         lower_text = vacancy_text.lower()
@@ -64,7 +68,7 @@ class VacancyAnalyzerAgent:
                 if keyword in lower_text:
                     return level
         
-        return "mid"  # default
+        return None
     
     def extract_keywords_for_ats(self, profile: VacancyProfile, vacancy_text: str) -> list:
         """Extract ATS keywords"""

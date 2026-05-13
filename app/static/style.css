@@ -39,25 +39,6 @@ header p {
     font-size: 14px;
 }
 
-.model-status-bar {
-    margin-top: 12px;
-    padding: 8px 16px;
-    background: #f0f4ff;
-    border-left: 4px solid #667eea;
-    border-radius: 4px;
-    font-size: 12px;
-    color: #667eea;
-    font-family: 'Monaco', 'Courier New', monospace;
-}
-
-#model-status {
-    cursor: help;
-}
-
-#model-status:hover {
-    opacity: 0.8;
-}
-
 /* Main Content Layout */
 .main-content {
     display: grid;
