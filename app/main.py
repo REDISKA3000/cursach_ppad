@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 import os
 from app.db import init_db
-from app.routers import pages, api_chat, api_generation
+from app.routers import pages, api_auth, api_chat, api_generation
 from app.config import DEBUG, STATIC_DIR
 
 # Setup logging
@@ -38,6 +38,7 @@ async def startup_event():
 
 # Include routers
 app.include_router(pages.router)
+app.include_router(api_auth.router)
 app.include_router(api_chat.router)
 app.include_router(api_generation.router)
 

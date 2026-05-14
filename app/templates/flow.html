@@ -94,7 +94,8 @@
       font-weight:650;
     }
 
-    body.flow-mode .top-actions{
+    body.flow-mode .top-actions,
+    body.cabinet-mode .top-actions{
       display:flex;
     }
 
@@ -1049,6 +1050,166 @@
       .screen-actions{flex-direction:column-reverse; align-items:stretch}
       .ghost-btn,.next-btn{width:100%}
     }
+
+    .cabinet-workspace{
+      min-height:calc(100vh - 112px);
+      border-radius:var(--radius-xl);
+      background:rgba(255,253,249,.82);
+      border:1px solid rgba(222,215,204,.82);
+      box-shadow:var(--shadow);
+      position:relative;
+      overflow:hidden;
+      backdrop-filter:blur(26px);
+      display:grid;
+      grid-template-columns:264px 1fr;
+    }
+    .cabinet-workspace::before{
+      content:"";
+      position:absolute;
+      width:420px;
+      height:420px;
+      right:-160px;
+      top:-160px;
+      background:radial-gradient(circle, rgba(139,92,246,.20), transparent 68%);
+      pointer-events:none;
+    }
+    .cabinet-rail{padding:28px 22px;border-right:1px solid rgba(222,215,204,.78);background:rgba(251,248,242,.78);position:relative;z-index:1}
+    .cabinet-rail h3{margin:0 0 18px;font-size:17px;color:var(--muted);font-weight:850;letter-spacing:-.02em}
+    .cabinet-nav-item{width:100%;border:0;background:transparent;border-radius:18px;padding:14px;display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--muted);margin-bottom:8px;text-align:left;transition:.18s ease;font:inherit}
+    .cabinet-nav-item:hover{background:#fff}
+    .cabinet-nav-item.active{background:#fff;color:#111;box-shadow:0 10px 24px rgba(39,32,24,.07)}
+    .cabinet-nav-ico{width:34px;height:34px;border-radius:14px;display:grid;place-items:center;background:#ebe5dc;font-size:15px;font-weight:900;flex:0 0 auto}
+    .cabinet-nav-item.active .cabinet-nav-ico{background:#111;color:#fff}
+    .cabinet-nav-copy b{display:block;font-size:15px;letter-spacing:-.02em}
+    .cabinet-nav-copy span{display:block;font-size:13px;line-height:1.25;margin-top:4px}
+    .cabinet-status-card{margin-top:26px;padding:16px;border-radius:22px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow-soft)}
+    .cabinet-status-card b{display:block;font-size:15px;margin-bottom:8px}
+    .cabinet-status-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}
+    .cabinet-screen{padding:34px;min-width:0;position:relative;z-index:1}
+    .cabinet-breadcrumb{display:flex;flex-wrap:wrap;gap:8px;color:#8c877e;font-size:13px;font-weight:750}
+    .cabinet-hero{margin-top:10px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+    .cabinet-hero h1{margin:0;font-family:var(--display);font-size:clamp(42px,5vw,72px);line-height:.96;letter-spacing:-.065em;font-weight:500;max-width:760px}
+    .cabinet-hero p{margin:14px 0 0;max-width:720px;color:var(--muted);font-size:18px;line-height:1.55}
+    .cabinet-actions{display:flex;flex-wrap:wrap;gap:12px}
+    .cabinet-grid{margin-top:28px;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+    .cabinet-card{background:rgba(255,253,249,.82);border:1px solid var(--line);border-radius:26px;box-shadow:var(--shadow-soft);padding:22px;min-width:0;overflow:hidden}
+    .cabinet-card h2,.cabinet-card h3{margin:0;letter-spacing:-.03em}
+    .cabinet-card h2{font-size:24px}
+    .cabinet-span-12{grid-column:span 12}.cabinet-span-8{grid-column:span 8}.cabinet-span-4{grid-column:span 4}
+    .cabinet-stack{margin-top:14px;display:grid;gap:12px}
+    .cabinet-row-line{display:grid;gap:5px;padding:12px 0;border-bottom:1px solid rgba(222,215,204,.78)}
+    .cabinet-row-line:last-child{border-bottom:0;padding-bottom:0}
+    .cabinet-row-line b{font-size:15px}
+    .cabinet-row-line span,.cabinet-row-line p{color:var(--muted);font-size:14px;line-height:1.5;margin:0;overflow-wrap:anywhere}
+    .cabinet-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+    .cabinet-chip-row span{padding:8px 11px;border:1px solid var(--line);border-radius:999px;background:#fff;color:#3f3d39;font-size:13px;font-weight:750;max-width:100%;white-space:normal;overflow-wrap:anywhere;line-height:1.25}
+    .cabinet-job-list{margin-top:14px;display:grid;gap:12px}
+    .cabinet-job-card{padding:16px;border:1px solid var(--line);border-radius:22px;background:#fff}
+    .cabinet-job-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px}
+    .cabinet-job-head b{font-size:17px;line-height:1.15;display:block;margin-bottom:4px}
+    .cabinet-job-head span{color:var(--muted);font-size:14px;line-height:1.35}
+    .cabinet-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--paper-2);color:var(--muted);font-size:12px;font-weight:850;white-space:nowrap}
+    .cabinet-job-card ul,.cabinet-info-list{margin:10px 0 0;padding-left:18px}
+    .cabinet-job-card li,.cabinet-info-list li{color:#3f3d39;font-size:14px;line-height:1.52;margin:7px 0;overflow-wrap:anywhere}
+    .cabinet-adaptation-list{margin-top:16px;display:grid;gap:14px}
+    .cabinet-adaptation-card{padding:18px;border:1px solid var(--line);border-radius:24px;background:#fff;box-shadow:0 10px 24px rgba(39,32,24,.05);display:grid;grid-template-columns:1fr auto;gap:18px;align-items:start}
+    .cabinet-adaptation-card h3{margin:0 0 8px;font-size:20px}
+    .cabinet-adaptation-card p{margin:0;color:var(--muted);line-height:1.5;font-size:14px}
+    .cabinet-actions-col{display:flex;flex-direction:column;gap:8px;min-width:170px}
+    .cabinet-mini-btn{min-height:42px;padding:0 14px;border-radius:14px;border:1px solid var(--line);background:#fff;font:inherit;font-weight:850;cursor:pointer;color:#111}
+    .cabinet-note{padding:18px;border-radius:24px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(251,248,242,.72));color:#3f3d39;font-size:15px;line-height:1.55}
+    .cabinet-tabs{width:max-content;max-width:100%;display:flex;gap:6px;padding:6px;border-radius:16px;background:#f1eee8;border:1px solid var(--line);margin-top:14px}
+    .cabinet-tab{border:0;background:transparent;border-radius:12px;padding:11px 16px;cursor:pointer;font:inherit;font-weight:850;color:var(--muted);white-space:nowrap}
+    .cabinet-tab.active{background:#fff;color:#111;box-shadow:0 7px 17px rgba(39,32,24,.08)}
+    .cabinet-textarea{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);background:#fff;border-radius:24px;padding:22px;font:inherit;font-size:16px;line-height:1.6;outline:none;color:#111;margin-top:14px}
+    .cabinet-file-zone{min-height:220px;border:1px dashed #111;border-radius:24px;background:#fff;display:grid;place-items:center;text-align:center;color:var(--muted);margin-top:14px;padding:24px;cursor:pointer}
+    .cabinet-resume-view{background:#fff;border:1px solid var(--line);border-radius:26px;padding:28px;box-shadow:0 12px 32px rgba(39,32,24,.06);min-height:640px}
+    .cabinet-resume-view h2{margin:0 0 8px;font-size:30px;letter-spacing:-.04em}
+    .cabinet-resume-view .role{color:var(--accent);font-weight:900;margin-bottom:18px}
+    .cabinet-resume-view h4{margin:18px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+    .cabinet-resume-view p,.cabinet-resume-view li{color:#3f3d39;font-size:14px;line-height:1.58}
+    .cabinet-resume-view pre{white-space:pre-wrap;margin:0;font:inherit;line-height:1.7;color:#3f3d39}
+    .cabinet-side-stack{display:grid;gap:14px}
+    .cabinet-detail-stack{display:grid;gap:14px}
+    .cabinet-progress-card{margin-top:18px;padding:18px;border-radius:24px;border:1px solid rgba(139,92,246,.22);background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(244,239,255,.78));display:flex;align-items:center;gap:16px;box-shadow:0 16px 34px rgba(94,67,160,.10)}
+    .cabinet-progress-card b{display:block;font-size:17px;margin-bottom:4px}
+    .cabinet-progress-card p{margin:0;color:var(--muted);font-size:14px;line-height:1.45}
+    .cabinet-spinner{width:38px;height:38px;border-radius:999px;border:4px solid rgba(139,92,246,.18);border-top-color:var(--accent);animation:cabinet-spin .8s linear infinite;flex:0 0 auto}
+    @keyframes cabinet-spin{to{transform:rotate(360deg)}}
+    .cabinet-empty{padding:28px;border:1px dashed var(--line-2);border-radius:24px;background:#fff;color:var(--muted);line-height:1.55}
+    .auth-shell{
+      min-height:calc(100vh - 112px);
+      display:grid;
+      place-items:center;
+      padding:42px 0;
+    }
+    .auth-card{
+      width:min(640px,100%);
+      border-radius:var(--radius-xl);
+      border:1px solid var(--line);
+      background:rgba(255,253,249,.88);
+      box-shadow:var(--shadow);
+      padding:36px;
+      position:relative;
+      overflow:hidden;
+    }
+    .auth-card::before{
+      content:"";
+      position:absolute;
+      width:260px;
+      height:260px;
+      right:-110px;
+      top:-110px;
+      background:radial-gradient(circle, rgba(139,92,246,.18), transparent 70%);
+      pointer-events:none;
+    }
+    .auth-card h1{
+      margin:0;
+      font-family:var(--display);
+      font-size:clamp(42px,6vw,72px);
+      line-height:.95;
+      letter-spacing:-.065em;
+      font-weight:500;
+      position:relative;
+    }
+    .auth-card p{margin:16px 0 0;color:var(--muted);font-size:18px;line-height:1.55;position:relative}
+    .auth-form{margin-top:26px;display:grid;gap:14px;position:relative}
+    .auth-input{
+      width:100%;
+      min-height:58px;
+      border-radius:18px;
+      border:1px solid var(--line);
+      background:#fff;
+      padding:0 18px;
+      font:inherit;
+      font-size:16px;
+      outline:none;
+    }
+    .auth-input:focus{border-color:#111}
+    .auth-error{
+      padding:13px 15px;
+      border-radius:16px;
+      border:1px solid #f0b8aa;
+      background:#fff4ef;
+      color:#9b3422;
+      font-size:14px;
+      line-height:1.4;
+    }
+    .auth-switch{margin-top:18px;color:var(--muted);position:relative}
+    .auth-link{border:0;background:transparent;color:#111;text-decoration:underline;cursor:pointer;font:inherit;font-weight:850;padding:0}
+    @media(max-width:900px){
+      .cabinet-workspace{grid-template-columns:1fr}
+      .cabinet-rail{display:none}
+      .cabinet-span-8,.cabinet-span-4,.cabinet-span-12{grid-column:span 12}
+    }
+    @media(max-width:560px){
+      .cabinet-screen{padding:24px}
+      .cabinet-adaptation-card{grid-template-columns:1fr}
+      .cabinet-actions-col{min-width:0;flex-direction:row;flex-wrap:wrap}
+      .cabinet-actions,.cabinet-actions .btn{width:100%}
+      .cabinet-tabs{width:100%}
+      .cabinet-tab{flex:1}
+    }
   </style>
 </head>
 <body>
@@ -1059,7 +1220,9 @@
         <div>Resume Flow</div>
       </div>
       <div class="top-actions" id="topActions">
+        <button class="pill" id="topCabinet" type="button">Кабинет</button>
         <button class="pill history-only" id="topHistory" type="button">История</button>
+        <button class="pill" id="topLogout" type="button">Выйти</button>
       </div>
     </header>
 
@@ -1069,26 +1232,28 @@
           <div>
             <h1>Резюме, которое не стыдно отправить.</h1>
             <p class="lead">
-              Сервис не заставляет разбираться в сложном дашборде. Просто добавьте резюме и вакансию -
-              система покажет анализ, усилит релевантный опыт и подготовит <strong>чистую адаптированную версию</strong>.
+              Сначала сохраните базовое резюме один раз. Дальше в кабинете создавайте отдельные адаптации
+              под разные вакансии без повторной загрузки source profile.
             </p>
 
             <div class="hero-actions">
+              <button class="btn btn-primary" id="landingRegister" type="button">Создать аккаунт</button>
+              <button class="btn btn-secondary" id="landingLogin" type="button">Войти</button>
               <button class="btn btn-secondary" id="logicBtn" type="button">Посмотреть логику</button>
             </div>
 
             <div class="trust-row">
               <div class="trust-card">
-                <b>Понятная линейная логика</b>
-                <span>Один экран - одно действие: резюме, вакансия, анализ и результат.</span>
+                <b>Резюме загружается один раз</b>
+                <span>Базовый профиль становится source для всех будущих адаптаций.</span>
               </div>
               <div class="trust-card">
                 <b>Без выдуманных фактов</b>
                 <span>Система не добавляет опыт, которого не было в исходных данных.</span>
               </div>
               <div class="trust-card">
-                <b>С промежуточной проверкой</b>
-                <span>Перед генерацией видно профиль кандидата, вакансию и стратегию.</span>
+                <b>Адаптации живут в кабинете</b>
+                <span>Каждая вакансия создаёт отдельную версию резюме.</span>
               </div>
             </div>
           </div>
@@ -1102,30 +1267,30 @@
           <div class="flow-line">
             <article class="flow-step">
               <div class="flow-num">1</div>
-              <h3 class="flow-title">Резюме</h3>
-              <p class="flow-text">Пользователь добавляет файл или текст. Система извлекает опыт, навыки и достижения.</p>
-              <div class="flow-artifact">профиль кандидата</div>
+              <h3 class="flow-title">Source resume</h3>
+              <p class="flow-text">Пользователь добавляет базовое резюме. Система извлекает опыт, навыки, образование и языки.</p>
+              <div class="flow-artifact">CandidateProfile</div>
             </article>
 
             <article class="flow-step">
               <div class="flow-num">2</div>
-              <h3 class="flow-title">Вакансия</h3>
-              <p class="flow-text">Пользователь вставляет описание роли. Система выделяет требования и ключевые задачи.</p>
-              <div class="flow-artifact">профиль вакансии</div>
+              <h3 class="flow-title">Кабинет</h3>
+              <p class="flow-text">После анализа пользователь попадает в экран «Моё резюме» с сохранённым source profile.</p>
+              <div class="flow-artifact">Моё резюме</div>
             </article>
 
             <article class="flow-step">
               <div class="flow-num">3</div>
-              <h3 class="flow-title">Анализ</h3>
-              <p class="flow-text">Система сопоставляет данные и показывает, что нужно усилить перед генерацией.</p>
-              <div class="flow-artifact">стратегия адаптации</div>
+              <h3 class="flow-title">Новая адаптация</h3>
+              <p class="flow-text">Пользователь добавляет только вакансию. Базовое резюме берётся из сохранённого source.</p>
+              <div class="flow-artifact">Vacancy + Strategy</div>
             </article>
 
             <article class="flow-step">
               <div class="flow-num">4</div>
-              <h3 class="flow-title">Результат</h3>
-              <p class="flow-text">Пользователь получает адаптированную версию резюме и скачивает её в нужном формате.</p>
-              <div class="flow-artifact">PDF / DOCX / TXT</div>
+              <h3 class="flow-title">Карточка адаптации</h3>
+              <p class="flow-text">Готовое резюме, профиль вакансии, стратегия и отчёт критика сохраняются как отдельная версия.</p>
+              <div class="flow-artifact">PDF / карточка</div>
             </article>
           </div>
 
@@ -1140,28 +1305,28 @@
       <section class="flow-wrap">
         <div class="product">
           <aside class="rail">
-            <p class="rail-title">Сценарий</p>
+            <p class="rail-title">Вход в продукт</p>
             <div class="rail-step active" data-step="0">
               <div class="rail-num">1</div>
-              <div class="rail-copy"><b>Резюме</b><span>загрузка опыта</span></div>
+              <div class="rail-copy"><b>Базовое резюме</b><span>создание source profile</span></div>
             </div>
-            <div class="rail-step" data-step="1">
-              <div class="rail-num">2</div>
-              <div class="rail-copy"><b>Вакансия</b><span>целевая роль</span></div>
-            </div>
-            <div class="rail-step" data-step="2">
-              <div class="rail-num">3</div>
-              <div class="rail-copy"><b>Анализ</b><span>что усилить</span></div>
-            </div>
-            <div class="rail-step" data-step="3">
-              <div class="rail-num">4</div>
-              <div class="rail-copy"><b>Результат</b><span>готовый файл</span></div>
+            <div class="storage-card" style="margin-top:18px">
+              <b>Дальше — кабинет</b>
+              <p>После сохранения резюме новые адаптации создаются в кабинете без повторной загрузки файла.</p>
             </div>
           </aside>
 
           <section class="screen" id="screen"></section>
         </div>
       </section>
+    </section>
+
+    <section class="page" id="cabinetPage">
+      <div id="cabinetRoot"></div>
+    </section>
+
+    <section class="page" id="authPage">
+      <div id="authRoot"></div>
     </section>
   </main>
 

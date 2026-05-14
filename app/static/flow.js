@@ -5,6 +5,10 @@ const state = {
   mode: "file",
   userId: null,
   conversationId: null,
+  authenticated: false,
+  authUser: null,
+  authMode: "login",
+  authError: "",
   resumeText: "",
   vacancyText: "",
   uploadedFileName: "",
@@ -18,12 +22,24 @@ const state = {
   vacancyWarnings: [],
   clarifyingQuestions: [],
   resumes: [],
+  sourceResume: null,
+  adaptations: [],
+  currentAdaptation: null,
+  cabinetView: "resume",
+  newAdaptationMode: "text",
+  newAdaptationText: "",
+  newAdaptationFile: null,
+  adaptationSubmitting: false,
   modelInfo: null,
   lastResumeAnalyzedText: "",
 };
 
 const landingPage = document.getElementById("landingPage");
 const flowPage = document.getElementById("flowPage");
+const cabinetPage = document.getElementById("cabinetPage");
+const cabinetRoot = document.getElementById("cabinetRoot");
+const authPage = document.getElementById("authPage");
+const authRoot = document.getElementById("authRoot");
 const railSteps = [...document.querySelectorAll(".rail-step")];
 const screen = document.getElementById("screen");
 const toast = document.getElementById("toast");
@@ -31,10 +47,10 @@ const topActions = document.getElementById("topActions");
 
 const meta = [
   {
-    label: "Шаг 1 из 4",
+    label: "Создание source resume",
     title: "Добавьте резюме",
-    subtitle: "Загрузите файл или вставьте текст. На этом этапе система извлекает опыт, навыки, образование и достижения кандидата.",
-    next: "Продолжить",
+    subtitle: "Загрузите базовое резюме один раз. Система извлечёт опыт, навыки, образование и сохранит source profile для будущих адаптаций.",
+    next: "Сохранить резюме",
   },
   {
     label: "Шаг 2 из 4",
@@ -73,6 +89,10 @@ function showToast(text) {
   showToast._timeoutId = setTimeout(() => toast.classList.remove("show"), 2200);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function setBusy(isBusy) {
   const next = document.getElementById("nextBtn");
   if (next) {
@@ -85,12 +105,12 @@ function setBusy(isBusy) {
 
 function head() {
   const currentMeta = meta[state.step];
-  const progress = (state.step + 1) * 25;
+  const progress = state.step === 0 ? 100 : (state.step + 1) * 25;
   return `
     <div class="progress-wrap">
       <div class="progress-meta">
         <span>${currentMeta.label}</span>
-        <span>${progress}% готово</span>
+        <span>${state.step === 0 ? "source profile" : `${progress}% готово`}</span>
       </div>
       <div class="progress-track">
         <div class="progress-fill" style="width:${progress}%"></div>
@@ -915,6 +935,566 @@ function renderResult() {
   bindActions();
 }
 
+function sourceResumeDisplayModel(source) {
+  const candidate = canonicalCandidateProfile(source?.candidate_profile);
+  return {
+    id: source?.id || null,
+    fileName: source?.file_name || "Базовое резюме",
+    updatedAt: source?.updated_at ? new Date(source.updated_at).toLocaleString("ru-RU") : "",
+    rawText: source?.raw_text || "",
+    candidate,
+    warnings: sanitizeWarnings(source?.warnings || source?.candidate_profile?.raw_warnings || []),
+  };
+}
+
+function adaptationListDisplayModel(adaptation) {
+  return {
+    id: adaptation.id,
+    title: adaptation.title || "Адаптированное резюме",
+    summary: adaptation.summary || "Адаптация сохранена.",
+    status: adaptation.status || "completed",
+    createdAt: adaptation.created_at ? new Date(adaptation.created_at).toLocaleDateString("ru-RU") : "",
+  };
+}
+
+function adaptationDetailDisplayModel(adaptation) {
+  const generated = adaptation?.generated_resume || {};
+  return {
+    id: adaptation?.id,
+    title: adaptation?.title || generated.title || "Адаптированное резюме",
+    summary: adaptation?.summary || "",
+    vacancyProfile: adaptation?.vacancy_profile || {},
+    strategyBrief: adaptation?.strategy_brief || {},
+    generatedResume: generated,
+    technicalReport: adaptation?.technical_report || generated.technical_report || {},
+    resumeText: generated.text || adaptation?.generated_resume_text || "",
+  };
+}
+
+function cabinetNav() {
+  const items = [
+    ["resume", "◎", "Моё резюме", "базовый профиль"],
+    ["adaptations", "◫", "Адаптации", "версии под вакансии"],
+    ["new", "＋", "Новая адаптация", "без повторной загрузки"],
+  ];
+  if (state.currentAdaptation) {
+    items.push(["detail", "↗", "Карточка адаптации", "резюме + анализ"]);
+  }
+
+  return `
+    <aside class="cabinet-rail">
+      <h3>Кабинет</h3>
+      ${items.map(([view, icon, title, subtitle]) => `
+        <button class="cabinet-nav-item ${state.cabinetView === view ? "active" : ""}" data-cabinet-view="${view}" type="button">
+          <div class="cabinet-nav-ico">${icon}</div>
+          <div class="cabinet-nav-copy"><b>${escapeHtml(title)}</b><span>${escapeHtml(subtitle)}</span></div>
+        </button>
+      `).join("")}
+      <div class="cabinet-status-card">
+        <b>Один source profile</b>
+        <p>Базовое резюме хранится отдельно. Новые вакансии создают отдельные адаптации без повторной загрузки резюме.</p>
+      </div>
+    </aside>
+  `;
+}
+
+function cabinetShell(contentHtml) {
+  return `
+    <div class="cabinet-workspace">
+      ${cabinetNav()}
+      <section class="cabinet-screen">
+        ${contentHtml}
+      </section>
+    </div>
+  `;
+}
+
+function cabinetHero(title, subtitle, actionsHtml = "", breadcrumb = "Кабинет") {
+  return `
+    <div class="cabinet-breadcrumb">${escapeHtml(breadcrumb)}</div>
+    <div class="cabinet-hero">
+      <div>
+        <h1>${escapeHtml(title)}</h1>
+        ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+      </div>
+      ${actionsHtml ? `<div class="cabinet-actions">${actionsHtml}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderCabinetJobs(jobs) {
+  if (!jobs?.length) {
+    return `<div class="cabinet-empty">Опыт работы пока не распознан.</div>`;
+  }
+  return `
+    <div class="cabinet-job-list">
+      ${jobs.map((job, index) => {
+        const bullets = [
+          ...(job.achievements || []),
+          ...(job.responsibilities || []),
+        ].slice(0, index === 0 ? 3 : 2);
+        return `
+          <article class="cabinet-job-card">
+            <div class="cabinet-job-head">
+              <div>
+                <b>${escapeHtml([job.position, job.company_name].filter(Boolean).join(" — ") || "Место работы")}</b>
+                <span>${escapeHtml([job.period, job.company_type].filter(Boolean).join(" · "))}</span>
+              </div>
+              <div class="cabinet-badge">${index === 0 ? "Основной опыт" : "Поддерживающий опыт"}</div>
+            </div>
+            ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderCabinetResumeScreen() {
+  const model = sourceResumeDisplayModel(state.sourceResume);
+  const candidate = model.candidate || {};
+  const jobs = candidate.jobs || [];
+  const educationText = (candidate.education || [])
+    .map((item) => [item.institution, item.degree, item.field, item.year].filter(Boolean).join(" · "))
+    .filter(Boolean)
+    .join(" | ");
+  const languageText = (candidate.languages || [])
+    .map((item) => typeof item === "string" ? item : [item.name, item.level].filter(Boolean).join(" — "))
+    .filter(Boolean)
+    .join(" · ");
+
+  const content = `
+    ${cabinetHero(
+      "Моё резюме",
+      "Это базовый профиль кандидата. Он используется как source для всех новых адаптаций.",
+      model.id ? `
+        <button class="btn btn-secondary" id="cabinetUpdateResume" type="button">Обновить резюме</button>
+        <button class="btn btn-primary" data-cabinet-view="new" type="button">Создать новую адаптацию</button>
+      ` : `
+        <button class="btn btn-primary" id="cabinetEntryResume" type="button">Добавить базовое резюме</button>
+      `,
+      "Кабинет / Моё резюме"
+    )}
+    <input type="file" id="cabinetSourceFile" hidden accept=".txt,.pdf,.doc,.docx" />
+    ${model.id ? `
+      <div class="cabinet-grid">
+        <div class="cabinet-card cabinet-span-12">
+          <h2>Базовое резюме</h2>
+          <div class="file-chip">${escapeHtml(model.fileName)}${model.updatedAt ? ` · обновлено ${escapeHtml(model.updatedAt)}` : ""}</div>
+          <div class="cabinet-stack" style="margin-top:18px">
+            <div class="cabinet-row-line"><b>Целевая роль</b><span>${escapeHtml(candidate.target_role || "не указана")}</span></div>
+            <div class="cabinet-row-line"><b>Общий опыт</b><span>${escapeHtml(formatExperience(candidate))}</span></div>
+            ${candidate.summary_raw ? `<div class="cabinet-row-line"><b>Сводка профиля</b><span>${escapeHtml(candidate.summary_raw)}</span></div>` : ""}
+          </div>
+          ${renderCabinetJobs(jobs)}
+          <div class="cabinet-stack" style="margin-top:18px">
+            <div class="cabinet-row-line"><b>Образование</b><span>${escapeHtml(educationText || "не указано")}</span></div>
+            <div class="cabinet-row-line"><b>Языки</b><span>${escapeHtml(languageText || "не указаны")}</span></div>
+          </div>
+        </div>
+        <div class="cabinet-card cabinet-span-12">
+          <h2>Ключевые навыки</h2>
+          ${candidate.skills_hard?.length ? `<div class="cabinet-chip-row">${limitedList(candidate.skills_hard, 24).map((skill) => `<span>${escapeHtml(skill)}</span>`).join("")}</div>` : `<div class="cabinet-empty">Навыки пока не распознаны.</div>`}
+        </div>
+      </div>
+    ` : `
+      <div class="cabinet-grid">
+        <div class="cabinet-card cabinet-span-12">
+          <div class="cabinet-empty">
+            Базовое резюме ещё не сохранено. Сначала создайте source profile, затем кабинет станет основной рабочей зоной для адаптаций.
+          </div>
+        </div>
+      </div>
+    `}
+  `;
+  return cabinetShell(content);
+}
+
+function renderCabinetAdaptationsScreen() {
+  const cards = state.adaptations.length
+    ? state.adaptations.map((item) => {
+      const model = adaptationListDisplayModel(item);
+      return `
+        <article class="cabinet-adaptation-card">
+          <div>
+            <h3>${escapeHtml(model.title)}</h3>
+            <p>${escapeHtml(model.summary)}</p>
+          </div>
+          <div class="cabinet-actions-col">
+            <button class="cabinet-mini-btn" data-open-adaptation="${model.id}" type="button">Открыть</button>
+            <button class="cabinet-mini-btn" data-download-adaptation="${model.id}" type="button">Скачать PDF</button>
+            <button class="cabinet-mini-btn" data-regenerate-adaptation="${model.id}" type="button">Перегенерировать</button>
+          </div>
+        </article>
+      `;
+    }).join("")
+    : `<div class="cabinet-empty">Адаптаций пока нет. Создайте первую версию под вакансию.</div>`;
+
+  return cabinetShell(`
+    ${cabinetHero(
+      "Адаптации",
+      "",
+      `<button class="btn btn-primary" data-cabinet-view="new" type="button">Новая адаптация</button>`,
+      "Кабинет / Адаптации"
+    )}
+    <div class="cabinet-adaptation-list">${cards}</div>
+  `);
+}
+
+function renderCabinetNewAdaptationScreen() {
+  return cabinetShell(`
+    ${cabinetHero("Новая адаптация", "", "", "Кабинет / Адаптации / Новая адаптация")}
+    <div class="cabinet-grid">
+      <div class="cabinet-card cabinet-span-12">
+        <h2>Вакансия</h2>
+        <div class="cabinet-tabs">
+          <button class="cabinet-tab ${state.newAdaptationMode === "text" ? "active" : ""}" data-adaptation-mode="text" type="button">Вставить текст</button>
+          <button class="cabinet-tab ${state.newAdaptationMode === "file" ? "active" : ""}" data-adaptation-mode="file" type="button">Загрузить файл</button>
+        </div>
+        <div class="cabinet-note" style="margin-top:14px">
+          Source resume уже сохранён. Повторно загружать его не нужно — новая адаптация будет создана на базе текущего CandidateProfile.
+        </div>
+        ${state.newAdaptationMode === "text" ? `
+          <textarea class="cabinet-textarea" id="cabinetVacancyText" placeholder="Вставьте описание вакансии сюда...">${escapeHtml(state.newAdaptationText)}</textarea>
+        ` : `
+          <div class="cabinet-file-zone" id="cabinetVacancyDrop">
+            <div>
+              <b>${state.newAdaptationFile ? escapeHtml(state.newAdaptationFile.name) : "Загрузите файл вакансии"}</b>
+              <p>TXT, PDF или DOCX</p>
+            </div>
+          </div>
+          <input type="file" id="cabinetVacancyFile" hidden accept=".txt,.pdf,.doc,.docx" />
+        `}
+        <div class="cta-inline">
+          <button class="btn btn-primary" id="runCabinetAdaptation" type="button" ${state.adaptationSubmitting ? "disabled" : ""}>
+            ${state.adaptationSubmitting ? "Адаптация запускается..." : "Запустить адаптацию"}
+          </button>
+          <button class="btn btn-secondary" id="draftCabinetAdaptation" type="button" ${state.adaptationSubmitting ? "disabled" : ""}>Черновик</button>
+        </div>
+        ${state.adaptationSubmitting ? `
+          <div class="cabinet-progress-card" role="status" aria-live="polite">
+            <div class="cabinet-spinner"></div>
+            <div>
+              <b>Готовим адаптацию</b>
+              <p>Анализируем вакансию, строим стратегию и собираем новую версию резюме. Обычно это занимает несколько секунд.</p>
+            </div>
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `);
+}
+
+function renderCabinetProfileCard(title, html) {
+  return `<div class="cabinet-card"><h2>${escapeHtml(title)}</h2>${html}</div>`;
+}
+
+function renderAuth() {
+  if (!authRoot) {
+    return;
+  }
+  const isRegister = state.authMode === "register";
+  authRoot.innerHTML = `
+    <div class="auth-shell">
+      <article class="auth-card">
+        <h1>${isRegister ? "Создайте аккаунт" : "Войдите в кабинет"}</h1>
+        <p>${isRegister
+          ? "После регистрации начнём с базового резюме: оно станет source profile для всех будущих адаптаций."
+          : "Войдите, чтобы открыть сохранённое резюме и адаптации под вакансии."}</p>
+        <form class="auth-form" id="authForm">
+          ${state.authError ? `<div class="auth-error">${escapeHtml(state.authError)}</div>` : ""}
+          <input class="auth-input" id="authEmail" name="email" type="text" inputmode="email" placeholder="Email" autocomplete="email" required />
+          <input class="auth-input" id="authPassword" name="password" type="password" placeholder="Пароль" autocomplete="${isRegister ? "new-password" : "current-password"}" required />
+          ${isRegister ? `<input class="auth-input" id="authPasswordConfirm" name="password_confirm" type="password" placeholder="Повторите пароль" autocomplete="new-password" required />` : ""}
+          <button class="btn btn-primary" id="authSubmit" type="submit">${isRegister ? "Создать аккаунт" : "Войти"}</button>
+        </form>
+        <div class="auth-switch">
+          ${isRegister ? "Уже есть аккаунт?" : "Нет аккаунта?"}
+          <button class="auth-link" id="authSwitch" type="button">${isRegister ? "Войти" : "Зарегистрироваться"}</button>
+        </div>
+      </article>
+    </div>
+  `;
+
+  document.getElementById("authSwitch").onclick = () => {
+    state.authError = "";
+    state.authMode = isRegister ? "login" : "register";
+    renderAuth();
+  };
+
+  document.getElementById("authForm").onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = document.getElementById("authSubmit");
+    submit.disabled = true;
+    submit.textContent = "Подождите...";
+    try {
+      const fields = {
+        email: document.getElementById("authEmail").value,
+        password: document.getElementById("authPassword").value,
+      };
+      if (isRegister) {
+        fields.password_confirm = document.getElementById("authPasswordConfirm").value;
+      }
+      await submitAuth(isRegister ? "register" : "login", fields);
+    } catch (error) {
+      state.authError = error.message;
+      renderAuth();
+    }
+  };
+}
+
+function renderCabinetAdaptationDetailScreen() {
+  const model = adaptationDetailDisplayModel(state.currentAdaptation);
+  if (!state.currentAdaptation) {
+    return cabinetShell(`
+      ${cabinetHero("Карточка адаптации", "", "", "Кабинет / Адаптации")}
+      <div class="cabinet-empty">Выберите адаптацию из списка.</div>
+    `);
+  }
+
+  const vacancy = model.vacancyProfile;
+  const strategy = model.strategyBrief;
+  const report = model.technicalReport;
+  return cabinetShell(`
+    ${cabinetHero(
+      "Карточка адаптации",
+      "",
+      `
+        <button class="btn btn-secondary" data-cabinet-view="adaptations" type="button">Назад к адаптациям</button>
+        <button class="btn btn-secondary" data-regenerate-adaptation="${model.id}" type="button">Перегенерировать</button>
+        <button class="btn btn-primary" data-download-adaptation="${model.id}" type="button">Скачать PDF</button>
+      `,
+      `Кабинет / Адаптации / ${model.title}`
+    )}
+    <div class="cabinet-grid">
+      <div class="cabinet-span-12">
+        <div class="cabinet-resume-view">
+          <h2>${escapeHtml(model.title)}</h2>
+          <div class="role">${escapeHtml(vacancy.role || strategy.positioning || "Адаптированная версия")}</div>
+          <pre>${escapeHtml(model.resumeText || "Текст резюме не найден")}</pre>
+        </div>
+      </div>
+      <div class="cabinet-span-12 cabinet-detail-stack">
+        ${renderCabinetProfileCard("Профиль вакансии", `
+          <div class="cabinet-stack">
+            <div class="cabinet-row-line"><b>Роль</b><span>${escapeHtml(vacancy.role || "не указана")}</span></div>
+            <div class="cabinet-row-line"><b>Уровень / индустрия</b><span>${escapeHtml([vacancy.seniority, vacancy.industry].filter(Boolean).join(" · ") || "не указано")}</span></div>
+          </div>
+          <div class="cabinet-chip-row">${limitedList([...(vacancy.must_have_skills || []), ...(vacancy.keywords_for_ats || [])], 16).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+        `)}
+        ${renderCabinetProfileCard("Стратегия", `
+          <ul class="cabinet-info-list">
+            <li><b>Позиционирование:</b> ${escapeHtml(strategy.positioning || "не сформировано")}</li>
+            <li><b>Что выделяем:</b> ${escapeHtml(limitedList(strategy.skills_to_highlight, 8).join(", ") || "не указано")}</li>
+            <li><b>Темы:</b> ${escapeHtml(limitedList(strategy.priority_themes, 6).join(", ") || "не указано")}</li>
+            <li><b>Гэпы:</b> ${escapeHtml(limitedList(strategy.gaps, 8).join(", ") || "нет явных гэпов")}</li>
+          </ul>
+        `)}
+        ${renderCabinetProfileCard("Отчёт критика", `
+          <ul class="cabinet-info-list">
+            ${(report.covered_must_haves || []).slice(0, 6).map((item) => `<li>Покрыто: ${escapeHtml(item)}</li>`).join("")}
+            ${(report.uncovered_must_haves || []).slice(0, 6).map((item) => `<li>Не покрыто: ${escapeHtml(item)}</li>`).join("")}
+            ${(report.critic_warnings || []).slice(0, 4).map((item) => `<li>${escapeHtml(humanizeWarning(item))}</li>`).join("")}
+          </ul>
+          <div class="cabinet-badge">confidence · ${escapeHtml(humanizeStatus(report.critic_confidence) || "средняя")}</div>
+        `)}
+      </div>
+    </div>
+  `);
+}
+
+function renderCabinet() {
+  if (!cabinetRoot) {
+    return;
+  }
+  if (!state.authenticated) {
+    state.authMode = "login";
+    showPage("auth");
+    return;
+  }
+  if (!state.sourceResume && state.cabinetView !== "resume") {
+    state.step = 0;
+    showPage("flow");
+    return;
+  }
+  if (state.cabinetView === "adaptations") {
+    cabinetRoot.innerHTML = renderCabinetAdaptationsScreen();
+  } else if (state.cabinetView === "new") {
+    cabinetRoot.innerHTML = renderCabinetNewAdaptationScreen();
+  } else if (state.cabinetView === "detail") {
+    cabinetRoot.innerHTML = renderCabinetAdaptationDetailScreen();
+  } else {
+    cabinetRoot.innerHTML = renderCabinetResumeScreen();
+  }
+  bindCabinetActions();
+}
+
+function bindCabinetActions() {
+  document.querySelectorAll("[data-cabinet-view]").forEach((button) => {
+    button.onclick = async () => {
+      state.cabinetView = button.dataset.cabinetView;
+      if (state.cabinetView === "adaptations") {
+        await loadAdaptations();
+      }
+      renderCabinet();
+    };
+  });
+
+  const updateResume = document.getElementById("cabinetUpdateResume");
+  const sourceFile = document.getElementById("cabinetSourceFile");
+  if (updateResume && sourceFile) {
+    updateResume.onclick = () => sourceFile.click();
+    sourceFile.onchange = async () => {
+      if (sourceFile.files?.[0]) {
+        await updateSourceResumeFile(sourceFile.files[0]);
+      }
+    };
+  }
+
+  const entryResume = document.getElementById("cabinetEntryResume");
+  if (entryResume) {
+    entryResume.onclick = () => {
+      state.step = 0;
+      showPage("flow");
+    };
+  }
+
+  document.querySelectorAll("[data-adaptation-mode]").forEach((button) => {
+    button.onclick = () => {
+      state.newAdaptationMode = button.dataset.adaptationMode;
+      renderCabinet();
+    };
+  });
+
+  const vacancyText = document.getElementById("cabinetVacancyText");
+  if (vacancyText) {
+    vacancyText.oninput = (event) => {
+      state.newAdaptationText = event.target.value;
+    };
+  }
+
+  const vacancyDrop = document.getElementById("cabinetVacancyDrop");
+  const vacancyFile = document.getElementById("cabinetVacancyFile");
+  if (vacancyDrop && vacancyFile) {
+    vacancyDrop.onclick = () => vacancyFile.click();
+    vacancyFile.onchange = () => {
+      state.newAdaptationFile = vacancyFile.files?.[0] || null;
+      renderCabinet();
+    };
+  }
+
+  const runAdaptation = document.getElementById("runCabinetAdaptation");
+  if (runAdaptation) {
+    runAdaptation.onclick = createCabinetAdaptation;
+  }
+
+  const draftAdaptation = document.getElementById("draftCabinetAdaptation");
+  if (draftAdaptation) {
+    draftAdaptation.onclick = () => showToast("Черновик сохранён локально на экране");
+  }
+
+  document.querySelectorAll("[data-open-adaptation]").forEach((button) => {
+    button.onclick = () => openCabinetAdaptation(Number(button.dataset.openAdaptation));
+  });
+
+  document.querySelectorAll("[data-download-adaptation]").forEach((button) => {
+    button.onclick = () => {
+      window.location.href = `/api/adaptations/${button.dataset.downloadAdaptation}/download/pdf`;
+    };
+  });
+
+  document.querySelectorAll("[data-regenerate-adaptation]").forEach((button) => {
+    button.onclick = () => regenerateCabinetAdaptation(Number(button.dataset.regenerateAdaptation));
+  });
+}
+
+async function updateSourceResumeFile(file) {
+  setBusy(true);
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (state.conversationId) {
+      formData.append("conversation_id", String(state.conversationId));
+    }
+    const data = await postFormData("/api/source-resume/upload", formData);
+    state.sourceResume = data.source_resume;
+    state.candidateProfile = data.source_resume?.candidate_profile || state.candidateProfile;
+    state.resumeText = data.source_resume?.raw_text || state.resumeText;
+    state.uploadedFileName = data.source_resume?.file_name || file.name;
+    showToast("Базовое резюме обновлено");
+    renderCabinet();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function createCabinetAdaptation() {
+  if (!state.sourceResume) {
+    showToast("Сначала сохраните базовое резюме");
+    return;
+  }
+  state.adaptationSubmitting = true;
+  renderCabinet();
+  try {
+    const startedAt = Date.now();
+    const formData = new FormData();
+    if (state.newAdaptationMode === "file" && state.newAdaptationFile) {
+      formData.append("file", state.newAdaptationFile);
+    } else {
+      formData.append("vacancy_text", state.newAdaptationText);
+    }
+    const data = await postFormData("/api/adaptations", formData);
+    const remainingLoadingMs = 700 - (Date.now() - startedAt);
+    if (remainingLoadingMs > 0) {
+      await sleep(remainingLoadingMs);
+    }
+    state.currentAdaptation = data.adaptation;
+    state.newAdaptationText = "";
+    state.newAdaptationFile = null;
+    state.adaptationSubmitting = false;
+    await loadAdaptations();
+    state.cabinetView = "detail";
+    showToast("Адаптация готова");
+    renderCabinet();
+  } catch (error) {
+    state.adaptationSubmitting = false;
+    showToast(error.message);
+    renderCabinet();
+  }
+}
+
+async function openCabinetAdaptation(adaptationId) {
+  setBusy(true);
+  try {
+    const data = await fetchJson(`/api/adaptations/${adaptationId}`);
+    state.currentAdaptation = data.adaptation;
+    state.cabinetView = "detail";
+    renderCabinet();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function regenerateCabinetAdaptation(adaptationId) {
+  setBusy(true);
+  try {
+    const data = await postForm(`/api/adaptations/${adaptationId}/regenerate`, {});
+    state.currentAdaptation = data.adaptation;
+    await loadAdaptations();
+    state.cabinetView = "detail";
+    showToast("Адаптация перегенерирована");
+    renderCabinet();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function updateRail() {
   railSteps.forEach((element, index) => {
     element.classList.toggle("active", index === state.step);
@@ -924,20 +1504,36 @@ function updateRail() {
 }
 
 function render() {
+  if (!state.authenticated) {
+    state.authMode = "register";
+    showPage("auth");
+    return;
+  }
+  if (state.step !== 0 && state.step !== 3) {
+    state.step = 0;
+  }
   updateRail();
   if (state.step === 0) renderResume();
-  if (state.step === 1) renderVacancy();
-  if (state.step === 2) renderAnalysis();
   if (state.step === 3) renderResult();
 }
 
 function showPage(page) {
   state.page = page;
   document.body.classList.toggle("flow-mode", page === "flow");
+  document.body.classList.toggle("cabinet-mode", page === "cabinet");
+  document.body.classList.toggle("auth-mode", page === "auth");
   landingPage.classList.toggle("active", page === "landing");
   flowPage.classList.toggle("active", page === "flow");
+  if (cabinetPage) {
+    cabinetPage.classList.toggle("active", page === "cabinet");
+  }
+  if (authPage) {
+    authPage.classList.toggle("active", page === "auth");
+  }
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (page === "flow") render();
+  if (page === "cabinet") renderCabinet();
+  if (page === "auth") renderAuth();
 }
 
 async function fetchJson(url) {
@@ -968,6 +1564,69 @@ async function postForm(url, fields) {
   return data;
 }
 
+async function postFormData(url, formData) {
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Request failed");
+  }
+  return data;
+}
+
+function applyAuthSession(data) {
+  state.authenticated = Boolean(data.authenticated);
+  state.authUser = data.user || null;
+  state.userId = data.user_id || data.user?.id || null;
+  state.conversationId = data.conversation_id || null;
+  if (!state.authenticated) {
+    state.sourceResume = null;
+    state.adaptations = [];
+    state.currentAdaptation = null;
+  }
+}
+
+async function loadAuthSession() {
+  const data = await fetchJson("/api/auth/session");
+  applyAuthSession(data);
+  return data;
+}
+
+async function submitAuth(mode, fields) {
+  const data = await postForm(`/api/auth/${mode}`, fields);
+  applyAuthSession(data);
+  state.authError = "";
+  if (data.has_source_resume) {
+    await loadSourceResume();
+    await loadAdaptations();
+    state.cabinetView = "resume";
+    showPage("cabinet");
+    return;
+  }
+  state.step = 0;
+  showPage("flow");
+}
+
+async function logout() {
+  await postForm("/api/auth/logout", {});
+  state.authenticated = false;
+  state.authUser = null;
+  state.userId = null;
+  state.conversationId = null;
+  state.sourceResume = null;
+  state.adaptations = [];
+  state.currentAdaptation = null;
+  state.candidateProfile = null;
+  state.resumeText = "";
+  state.uploadedFileName = "";
+  state.authMode = "login";
+  showPage("landing");
+  showToast("Вы вышли из аккаунта");
+}
+
 async function bootstrapSession() {
   const data = await fetchJson("/api/session/bootstrap");
   state.userId = data.user_id;
@@ -991,9 +1650,31 @@ async function loadResumes() {
   state.resumes = data.resumes || [];
 }
 
+async function loadSourceResume() {
+  if (!state.authenticated) {
+    return;
+  }
+  const data = await fetchJson("/api/source-resume");
+  state.sourceResume = data.source_resume || null;
+  if (state.sourceResume) {
+    state.resumeText = state.sourceResume.raw_text || state.resumeText;
+    state.candidateProfile = state.sourceResume.candidate_profile || state.candidateProfile;
+    state.uploadedFileName = state.sourceResume.file_name || state.uploadedFileName;
+  }
+}
+
+async function loadAdaptations() {
+  if (!state.authenticated) {
+    return;
+  }
+  const data = await fetchJson("/api/adaptations");
+  state.adaptations = data.adaptations || [];
+}
+
 async function uploadResumeFile(file) {
-  if (!state.userId || !state.conversationId) {
-    showToast("Сессия еще инициализируется");
+  if (!state.authenticated) {
+    state.authMode = "register";
+    showPage("auth");
     return;
   }
 
@@ -1001,27 +1682,23 @@ async function uploadResumeFile(file) {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("user_id", String(state.userId));
-    formData.append("conversation_id", String(state.conversationId));
-
-    const response = await fetch("/api/upload-resume", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || "Не удалось загрузить файл");
+    if (state.conversationId) {
+      formData.append("conversation_id", String(state.conversationId));
     }
 
+    const data = await postFormData("/api/source-resume/upload", formData);
+
     state.uploadedFileName = file.name;
-    state.resumeText = data.resume_text || "";
-    state.candidateProfile = data.candidate_profile;
-    state.resumeWarnings = sanitizeWarnings(data.warnings || []);
-    state.clarifyingQuestions = data.questions || [];
+    state.resumeText = data.source_resume?.raw_text || "";
+    state.sourceResume = data.source_resume || state.sourceResume;
+    state.candidateProfile = data.source_resume?.candidate_profile || state.candidateProfile;
+    state.resumeWarnings = sanitizeWarnings(data.source_resume?.warnings || []);
+    state.clarifyingQuestions = data.source_resume?.questions || [];
     state.lastResumeAnalyzedText = state.resumeText;
     showToast("Резюме обработано");
-    render();
+    state.cabinetView = "resume";
+    await loadAdaptations();
+    showPage("cabinet");
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -1030,8 +1707,8 @@ async function uploadResumeFile(file) {
 }
 
 async function ensureResumeAnalyzed() {
-  if (!state.conversationId) {
-    throw new Error("Сессия не готова");
+  if (!state.authenticated) {
+    throw new Error("Сначала войдите в аккаунт");
   }
 
   if (state.mode === "file") {
@@ -1049,14 +1726,15 @@ async function ensureResumeAnalyzed() {
     return;
   }
 
-  const data = await postForm("/api/analyze/resume-text", {
+  const data = await postForm("/api/source-resume/text", {
     resume_text: state.resumeText,
-    conversation_id: state.conversationId,
+    conversation_id: state.conversationId || "",
   });
 
-  state.candidateProfile = data.candidate_profile;
-  state.resumeWarnings = sanitizeWarnings(data.warnings || []);
-  state.clarifyingQuestions = data.questions || [];
+  state.sourceResume = data.source_resume || state.sourceResume;
+  state.candidateProfile = data.source_resume?.candidate_profile || state.candidateProfile;
+  state.resumeWarnings = sanitizeWarnings(data.source_resume?.warnings || []);
+  state.clarifyingQuestions = data.source_resume?.questions || [];
   state.lastResumeAnalyzedText = state.resumeText;
 }
 
@@ -1106,38 +1784,15 @@ async function handleNextStep() {
   try {
     if (state.step === 0) {
       await ensureResumeAnalyzed();
-      state.step = 1;
-      render();
-      showToast("Резюме готово к сопоставлению");
+      state.cabinetView = "resume";
+      await loadSourceResume();
+      await loadAdaptations();
+      showPage("cabinet");
+      showToast("Базовое резюме сохранено");
       return;
     }
-
-    if (state.step === 1) {
-      await buildPreview();
-      state.step = 2;
-      render();
-      showToast("Анализ готов");
-      return;
-    }
-
-    if (state.step === 2) {
-      await generateResume();
-      state.step = 3;
-      render();
-      showToast("Резюме сгенерировано");
-      return;
-    }
-
-    state.step = 1;
-    state.vacancyText = "";
-    state.vacancyProfile = null;
-    state.strategyBrief = null;
-    state.generatedResume = null;
-    state.techReport = null;
-    state.currentResumeId = null;
-    state.vacancyWarnings = [];
+    state.step = 0;
     render();
-    showToast("Введите новую вакансию");
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -1342,21 +1997,78 @@ async function loadResumeFromHistory(resumeId) {
   }
 }
 
+async function openProductEntry() {
+  if (!state.authenticated) {
+    state.authMode = "register";
+    state.authError = "";
+    showPage("auth");
+    return;
+  }
+  await loadSourceResume();
+  await loadAdaptations();
+  if (state.sourceResume) {
+    state.cabinetView = "resume";
+    showPage("cabinet");
+    return;
+  }
+  state.step = 0;
+  showPage("flow");
+}
+
 function bindStaticActions() {
   document.getElementById("logicBtn").onclick = () => {
     document.getElementById("howItWorks").scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  document.getElementById("topHistory").onclick = openHistoryModal;
+  const landingLogin = document.getElementById("landingLogin");
+  if (landingLogin) {
+    landingLogin.onclick = () => {
+      state.authMode = "login";
+      state.authError = "";
+      showPage("auth");
+    };
+  }
 
-  document.getElementById("startFlowBottom").onclick = () => {
-    state.step = 0;
-    showPage("flow");
-  };
+  const landingRegister = document.getElementById("landingRegister");
+  if (landingRegister) {
+    landingRegister.onclick = () => {
+      state.authMode = "register";
+      state.authError = "";
+      showPage("auth");
+    };
+  }
+
+  document.getElementById("topHistory").onclick = openHistoryModal;
+  const topLogout = document.getElementById("topLogout");
+  if (topLogout) {
+    topLogout.onclick = logout;
+  }
+  const topCabinet = document.getElementById("topCabinet");
+  if (topCabinet) {
+    topCabinet.onclick = async () => {
+      if (!state.authenticated) {
+        state.authMode = "login";
+        showPage("auth");
+        return;
+      }
+      await loadSourceResume();
+      await loadAdaptations();
+      if (!state.sourceResume) {
+        state.step = 0;
+        showPage("flow");
+        showToast("Сначала сохраните базовое резюме");
+        return;
+      }
+      state.cabinetView = "resume";
+      showPage("cabinet");
+    };
+  }
+
+  document.getElementById("startFlowBottom").onclick = openProductEntry;
 
   railSteps.forEach((element) => {
     element.onclick = () => {
-      state.step = Number(element.dataset.step);
+      state.step = 0;
       showPage("flow");
     };
   });
@@ -1364,12 +2076,15 @@ function bindStaticActions() {
 
 async function init() {
   bindStaticActions();
-  render();
 
   try {
-    await bootstrapSession();
+    await loadAuthSession();
     await loadModelInfo();
-    await loadResumes();
+    if (state.authenticated) {
+      await loadResumes();
+      await loadSourceResume();
+      await loadAdaptations();
+    }
     state.initialized = true;
   } catch (error) {
     showToast(`Ошибка инициализации: ${error.message}`);
