@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 GETMATCH_BASE_URL = "https://getmatch.ru"
 GETMATCH_API_BASE_URL = "https://getmatch.ru/api"
+_POOL_SYNC_STARTED = False
+_POOL_SYNC_LOCK = threading.Lock()
 
 
 @dataclass
@@ -40,13 +43,80 @@ class GetMatchIngestionResult:
 
 
 def ensure_vacancy_pool(db: Session, *, max_age_hours: int = 24) -> None:
-    """Deprecated UI-side refresh hook.
+    """Compatibility hook: synchronously fill the pool when explicitly called."""
+    count = JobBoardVacancyRepository.count(db)
+    if count:
+        return
+    result = ingest_getmatch_vacancies(db, limit=None, commit=True)
+    logger.info(
+        "Vacancy pool sync completed: total_from_api=%s discovered=%s saved=%s skipped=%s failed=%s",
+        result.total_from_api,
+        result.discovered,
+        result.saved,
+        result.skipped,
+        result.failed,
+    )
 
-    Full GetMatch sync is intentionally run from scripts/ingest_getmatch_vacancies.py,
-    not from request/response handlers. Keeping this function as a no-op prevents
-    the workspace from blocking on external job-board ingestion.
+
+def start_getmatch_pool_sync_if_needed(
+    session_factory,
+    *,
+    enabled: bool = True,
+    min_size: int = 100,
+    limit: int | None = None,
+) -> bool:
+    """Start a non-blocking GetMatch sync if the shared vacancy pool is empty/small.
+
+    Railway deployments should not require a manual shell command just to make
+    the recommendations rail useful. The sync is deliberately backgrounded so
+    the web process can boot and pass health checks quickly.
     """
-    return
+    if not enabled:
+        logger.info("Vacancy pool auto-sync disabled")
+        return False
+
+    global _POOL_SYNC_STARTED
+    with _POOL_SYNC_LOCK:
+        if _POOL_SYNC_STARTED:
+            return False
+        _POOL_SYNC_STARTED = True
+
+    def _run() -> None:
+        db = session_factory()
+        try:
+            before = JobBoardVacancyRepository.count(db)
+            if before >= min_size:
+                logger.info("Vacancy pool auto-sync skipped: count=%s min_size=%s", before, min_size)
+                return
+
+            logger.info(
+                "Vacancy pool auto-sync started: count=%s min_size=%s limit=%s",
+                before,
+                min_size,
+                limit or "full",
+            )
+            removed_demo_rows = JobBoardVacancyRepository.delete_known_demo_rows(db)
+            result = ingest_getmatch_vacancies(db, limit=limit, commit=True)
+            after = JobBoardVacancyRepository.count(db)
+            logger.info(
+                "Vacancy pool auto-sync finished: total_from_api=%s discovered=%s saved=%s "
+                "skipped=%s failed=%s removed_demo_rows=%s total_before=%s total_after=%s",
+                result.total_from_api,
+                result.discovered,
+                result.saved,
+                result.skipped,
+                result.failed,
+                removed_demo_rows,
+                before,
+                after,
+            )
+        except Exception:
+            logger.exception("Vacancy pool auto-sync failed")
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, name="getmatch-vacancy-pool-sync", daemon=True).start()
+    return True
 
 
 def save_vacancy_pool_items(db: Session, collected: list[VacancyPoolItem]) -> int:

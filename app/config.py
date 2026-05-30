@@ -31,6 +31,14 @@ CANDIDATE_EVIDENCE_VALIDATION_ENABLED = os.getenv(
     "false",
 ).lower() == "true"
 
+# Vacancy recommendation pool.
+# On Railway this keeps the shared GetMatch vacancy pool populated without a
+# manual one-off command after every deploy.
+VACANCY_POOL_AUTO_SYNC = os.getenv("VACANCY_POOL_AUTO_SYNC", "true").lower() == "true"
+VACANCY_POOL_MIN_SIZE = int(os.getenv("VACANCY_POOL_MIN_SIZE", "100"))
+_vacancy_pool_limit = os.getenv("VACANCY_POOL_SYNC_LIMIT", "").strip()
+VACANCY_POOL_SYNC_LIMIT = int(_vacancy_pool_limit) if _vacancy_pool_limit else None
+
 # Paths
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOADS_DIR = os.path.join(PROJECT_ROOT, "uploads")

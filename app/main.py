@@ -4,9 +4,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import os
-from app.db import init_db
+from app.db import SessionLocal, init_db
 from app.routers import pages, api_auth, api_chat, api_generation
-from app.config import DEBUG, STATIC_DIR
+from app.config import DEBUG, STATIC_DIR, VACANCY_POOL_AUTO_SYNC, VACANCY_POOL_MIN_SIZE, VACANCY_POOL_SYNC_LIMIT
+from app.services.vacancy_recommendations import start_getmatch_pool_sync_if_needed
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +36,12 @@ async def startup_event():
     logger.info("Initializing database...")
     init_db()
     logger.info("Database initialized")
+    start_getmatch_pool_sync_if_needed(
+        SessionLocal,
+        enabled=VACANCY_POOL_AUTO_SYNC,
+        min_size=VACANCY_POOL_MIN_SIZE,
+        limit=VACANCY_POOL_SYNC_LIMIT,
+    )
 
 # Include routers
 app.include_router(pages.router)
