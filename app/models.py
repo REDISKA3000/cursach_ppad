@@ -17,6 +17,7 @@ class User(Base):
     resumes = relationship("ResumeGeneration", back_populates="user", cascade="all, delete-orphan")
     source_resumes = relationship("SourceResume", back_populates="user", cascade="all, delete-orphan")
     adaptations = relationship("ResumeAdaptation", back_populates="user", cascade="all, delete-orphan")
+    external_vacancies = relationship("ExternalVacancy", back_populates="user", cascade="all, delete-orphan")
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -86,6 +87,8 @@ class ResumeAdaptation(Base):
     source_resume_id = Column(Integer, ForeignKey("source_resumes.id"), index=True)
     title = Column(String(255), default="Adapted Resume")
     vacancy_text = Column(Text)
+    vacancy_source_type = Column(String(50), default="text")
+    vacancy_source_url = Column(String(1000), nullable=True)
     vacancy_profile_json = Column(JSON, nullable=True)
     strategy_brief_json = Column(JSON, nullable=True)
     generated_resume_text = Column(Text)
@@ -100,3 +103,40 @@ class ResumeAdaptation(Base):
 
     user = relationship("User", back_populates="adaptations")
     source_resume = relationship("SourceResume", back_populates="adaptations")
+
+
+class ExternalVacancy(Base):
+    __tablename__ = "external_vacancies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    source = Column(String(80), index=True)
+    source_url = Column(String(1000), nullable=True)
+    title = Column(String(500), default="")
+    company = Column(String(255), default="")
+    location = Column(String(255), default="")
+    salary = Column(String(255), nullable=True)
+    description = Column(Text)
+    normalized_text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="external_vacancies")
+
+
+class JobBoardVacancy(Base):
+    __tablename__ = "job_board_vacancies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(80), index=True)
+    source_url = Column(String(1000), nullable=True, index=True)
+    title = Column(String(500), default="")
+    company = Column(String(255), default="")
+    location = Column(String(255), default="")
+    salary = Column(String(255), nullable=True)
+    description = Column(Text)
+    normalized_text = Column(Text)
+    tags_json = Column(JSON, nullable=True)
+    collected_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

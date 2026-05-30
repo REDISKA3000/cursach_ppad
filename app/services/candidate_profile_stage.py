@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.config import CANDIDATE_EVIDENCE_VALIDATION_ENABLED
 from app.schemas.candidate import (
+    CandidateAchievement,
     CandidateCanonicalProfile,
     CandidateEvidenceBlock,
     CandidateJob,
@@ -178,6 +179,26 @@ IMPACT_PATTERNS = [
     r"\b(?:increase|decrease|reduce|improve|grow|boost|cut|save|deliver|achiev|optimi[sz]e)\w*",
     r"\b(?:увелич|сократ|сниз|оптимиз|ускор|рост|роста|повыс|достиг|внедрил|внедрила|позволил|позволила|автоматиз)\w*",
     r"\b(?:resulted in|led to|enabled|allowing|which helped|что позволило|что помогло)\b",
+]
+
+METRIC_SIGNAL_PATTERNS = [
+    r"\b\d+\s*%",
+    r"\bна\s+\d+\s*%",
+    r"\bв\s+\d+\s+раз",
+    r"\d[\d\s,.]*\+?\s*(?:DAU|MAU)\b",
+    r"(?:увелич\w+|сократ\w+|сниз\w+|повыс\w+|ускор\w+|оптимизир\w+).*?(?:\d+\s*%|в\s+\d+\s+раз)",
+    r"(?:конверс\w+|воронк\w+|выручк\w+|расход\w+|затрат\w+|врем\w+|кросс-продаж\w+).*?(?:\d+\s*%|в\s+\d+\s+раз)",
+]
+
+PROFESSIONAL_SIGNAL_PATTERNS = [
+    r"\bA/B\b|\bА/B\b|а/б\s+тест",
+    r"гипотез\w+",
+    r"ad-?hoc|ад-?хок",
+    r"дашборд\w+|dashboard\w+",
+    r"витрин\w+\s+данн\w+|data\s+mart",
+    r"\bETL\b",
+    r"stakeholder|стейкхолдер|C-?level|руководств\w+",
+    r"команд\w+",
 ]
 
 DOMAIN_CONTEXT_PATTERNS = {
@@ -567,6 +588,7 @@ def parse_candidate_profile_section_text(response_text: str) -> CandidateProfile
     education = _parse_education_section(sections.get("EDUCATION", []))
     languages = _parse_languages_section(sections.get("LANGUAGES", []))
     certifications = _parse_semicolon_section(sections.get("CERTIFICATIONS", []))
+    achievements = _parse_achievements_section(sections.get("ACHIEVEMENTS", []))
     ambiguities = _parse_bullet_or_line_section(sections.get("AMBIGUITIES", []))
     raw_warnings = _parse_bullet_or_line_section(sections.get("WARNINGS", []))
 
@@ -575,6 +597,7 @@ def parse_candidate_profile_section_text(response_text: str) -> CandidateProfile
     evidence.skills_section = ["; ".join(skills_hard)] if skills_hard else []
     evidence.education = [line for line in sections.get("EDUCATION", []) if line.strip()]
     evidence.languages = [line for line in sections.get("LANGUAGES", []) if line.strip()]
+    evidence.achievements = [item.evidence or item.text for item in achievements if item.evidence or item.text]
 
     if "TARGET_ROLE" not in sections:
         raw_warnings.append("CandidateProfile section missing: TARGET_ROLE")
@@ -594,6 +617,7 @@ def parse_candidate_profile_section_text(response_text: str) -> CandidateProfile
         education=education,
         languages=languages,
         certifications=certifications,
+        achievements=achievements,
     )
     return CandidateProfile(
         canonical_profile=canonical,
@@ -646,6 +670,29 @@ def _parse_bullet_or_line_section(lines: Sequence[str]) -> List[str]:
     return _dedupe_strings(result)
 
 
+def _parse_achievements_section(lines: Sequence[str]) -> List[CandidateAchievement]:
+    achievements: List[CandidateAchievement] = []
+    for line in lines:
+        cleaned = canonicalize_text(line)
+        if not cleaned:
+            continue
+        parts = [canonicalize_text(part) for part in cleaned.split("|")]
+        if len(parts) < 5:
+            continue
+        _, company, text, metric, evidence = (parts + [""] * 5)[:5]
+        if text or evidence:
+            achievements.append(
+                CandidateAchievement(
+                    company=company,
+                    text=text or evidence,
+                    metric=metric,
+                    evidence=evidence or text,
+                    source="resume/llm_extraction",
+                )
+            )
+    return achievements
+
+
 def _parse_job_section(job_id: int, lines: Sequence[str]) -> Tuple[Optional[CandidateJob], CandidateJobEvidenceItem]:
     fields = {"company": "", "company_type": "", "position": "", "period": ""}
     highlights: List[str] = []
@@ -677,7 +724,7 @@ def _parse_job_section(job_id: int, lines: Sequence[str]) -> Tuple[Optional[Cand
         company=[fields["company"]] if fields["company"] else [],
         position=[fields["position"]] if fields["position"] else [],
         period=[fields["period"]] if fields["period"] else [],
-        highlights=_dedupe_strings(highlights[:2]),
+        highlights=_dedupe_strings(highlights),
     )
     if present_fields < 2:
         return None, job_evidence
@@ -688,8 +735,8 @@ def _parse_job_section(job_id: int, lines: Sequence[str]) -> Tuple[Optional[Cand
             company_type=fields["company_type"] or None,
             position=fields["position"] or None,
             period=fields["period"] or None,
-            responsibilities=_dedupe_strings(highlights[:2]),
-            achievements=[],
+            responsibilities=_dedupe_strings([item for item in highlights if not _looks_like_achievement(item)] or highlights),
+            achievements=_dedupe_strings([item for item in highlights if _looks_like_achievement(item)]),
             skills_used=[],
         ),
         job_evidence,
@@ -891,9 +938,9 @@ def build_evidence_package(
             highlights=collect_global_from_block(
                 f"job_{job.id}_highlights",
                 original_job_evidence.highlights if original_job_evidence else [],
-                [*job.achievements[:2], *job.responsibilities[:3], *job.skills_used[:3]],
+                [*job.achievements, *job.responsibilities, *job.skills_used[:6]],
                 block,
-                max_snippets=2,
+                max_snippets=8,
             ),
         )
         evidence.jobs.append(job_evidence)
@@ -920,6 +967,35 @@ def build_evidence_package(
         language_candidates,
         preview.section_blocks.get("languages"),
     )
+
+    achievement_snippets = [
+        item.evidence or item.text
+        for item in profile.achievements
+        if item.evidence or item.text
+    ]
+    evidence.achievements = collect_global_from_block(
+        "achievements",
+        original_evidence.achievements or achievement_snippets,
+        achievement_snippets,
+        full_block,
+        max_snippets=12,
+    )
+    regex_snippets = [
+        item.evidence or item.text
+        for item in profile.achievements
+        if item.source in {"regex_metric_scan", "regex_signal_scan"} and (item.evidence or item.text)
+    ]
+    if regex_snippets:
+        evidence.achievements = _dedupe_strings([*evidence.achievements, *regex_snippets])
+        provenance.setdefault("achievements", []).append(
+            ProvenanceItem(
+                source_block_id="regex_metric_scan",
+                source_snippets=_dedupe_strings(regex_snippets),
+                extraction_mode="fallback",
+                validation_status="not_validated",
+                confidence_hint="medium",
+            )
+        )
 
     return evidence, provenance
 
@@ -1214,6 +1290,166 @@ def _extract_explicit_experience_snippets(text: str) -> List[str]:
     return _dedupe_snippets(snippets)[:2]
 
 
+def extract_metric_snippets_from_resume(resume_text: str) -> List[str]:
+    """Return source-like resume bullets/sentences that carry metric or product signals."""
+    snippets: List[str] = []
+    normalized_text = normalize_whitespace(resume_text)
+    candidates: List[str] = []
+    for line in normalized_text.splitlines():
+        cleaned = canonicalize_text(re.sub(r"^\s*(?:[-•*]|\d+[.)])\s*", "", line))
+        if cleaned:
+            candidates.extend(_split_dense_signal_line(cleaned))
+
+    patterns = [*METRIC_SIGNAL_PATTERNS, *PROFESSIONAL_SIGNAL_PATTERNS]
+    for candidate in candidates:
+        if any(re.search(pattern, candidate, flags=re.IGNORECASE) for pattern in patterns):
+            snippets.append(candidate)
+    return _dedupe_snippets(snippets)
+
+
+def _split_dense_signal_line(line: str) -> List[str]:
+    """Split a dense paragraph into sentence-like signal snippets without losing source wording."""
+    parts = re.split(r"(?<=[.!?])\s+|;\s+", line)
+    cleaned_parts = [canonicalize_text(part) for part in parts if canonicalize_text(part)]
+    return cleaned_parts or [line]
+
+
+def normalize_text_for_compare(value: str) -> str:
+    normalized = canonicalize_text(value).lower().replace("ё", "е")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _metric_value_from_snippet(snippet: str) -> str:
+    patterns = [
+        r"\d[\d\s,.]*\+?\s*(?:DAU|MAU)\b",
+        r"\d+(?:[.,]\d+)?\s*%",
+        r"в\s+\d+\s+раз",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, snippet, flags=re.IGNORECASE)
+        if match:
+            return canonicalize_text(match.group(0))
+    return ""
+
+
+def _profile_signal_text(profile: CandidateProfile) -> str:
+    parts: List[str] = []
+    parts.extend(item.text for item in profile.achievements)
+    parts.extend(item.evidence for item in profile.achievements)
+    for job in profile.jobs:
+        parts.extend(job.responsibilities)
+        parts.extend(job.achievements)
+        parts.extend(job.skills_used)
+    parts.extend(profile.evidence.achievements)
+    for item in profile.evidence.jobs:
+        parts.extend(item.highlights)
+    return normalize_text_for_compare(" ".join(part for part in parts if part))
+
+
+def _guess_company_for_snippet(snippet: str, profile: CandidateProfile, resume_text: str) -> str:
+    for job in profile.jobs:
+        job_text = " ".join([*job.responsibilities, *job.achievements])
+        if job.company_name and normalize_text_for_compare(snippet)[:40] in normalize_text_for_compare(job_text):
+            return job.company_name
+
+    lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    snippet_key = normalize_text_for_compare(snippet)
+    for index, line in enumerate(lines):
+        line_key = normalize_text_for_compare(line)
+        if line_key and (line_key in snippet_key or snippet_key in line_key):
+            previous_window = lines[max(0, index - 6):index]
+            previous_text = normalize_text_for_compare(" ".join(previous_window))
+            for job in profile.jobs:
+                if job.company_name and normalize_text_for_compare(job.company_name) in previous_text:
+                    return job.company_name
+            for previous in reversed(lines[max(0, index - 5):index]):
+                if not _looks_like_section_heading(previous) and not _looks_like_period_line(previous) and len(previous) <= 80:
+                    return canonicalize_text(previous)
+    return ""
+
+
+def _looks_like_period_line(line: str) -> bool:
+    lowered = line.lower()
+    return bool(re.search(r"\b(19|20)\d{2}\b|настоящее время|present|н\.в", lowered))
+
+
+def _add_metric_fallback_achievements(profile: CandidateProfile, resume_text: str) -> None:
+    snippets = extract_metric_snippets_from_resume(resume_text)
+    if not snippets:
+        return
+
+    existing_text = _profile_signal_text(profile)
+    added: List[str] = []
+    for snippet in snippets:
+        snippet_key = normalize_text_for_compare(snippet)
+        if not snippet_key:
+            continue
+        if snippet_key in existing_text or any(snippet_key in normalize_text_for_compare(item) for item in added):
+            continue
+        metric = _metric_value_from_snippet(snippet)
+        source = "regex_metric_scan" if metric else "regex_signal_scan"
+        profile.achievements.append(
+            CandidateAchievement(
+                company=_guess_company_for_snippet(snippet, profile, resume_text),
+                text=snippet,
+                metric=metric,
+                evidence=snippet,
+                source=source,
+            )
+        )
+        profile.evidence.achievements.append(snippet)
+        if profile.jobs:
+            target_job = _find_best_job_for_snippet(snippet, profile, resume_text)
+            if target_job:
+                target_job.responsibilities = _dedupe_strings([*target_job.responsibilities, snippet])
+                if metric or _looks_like_achievement(snippet):
+                    target_job.achievements = _dedupe_strings([*target_job.achievements, snippet])
+        warning_label = "Metric achievement" if metric else "Professional signal"
+        profile.raw_warnings.append(f"{warning_label} was found by regex fallback and added to profile: {snippet}")
+        added.append(snippet)
+
+
+def _sync_job_achievements_to_profile(profile: CandidateProfile) -> None:
+    existing = {
+        normalize_text_for_compare(item.evidence or item.text)
+        for item in profile.achievements
+        if item.evidence or item.text
+    }
+    for job in profile.jobs:
+        for achievement in job.achievements:
+            key = normalize_text_for_compare(achievement)
+            if not key or key in existing:
+                continue
+            if not (_metric_value_from_snippet(achievement) or _looks_like_achievement(achievement)):
+                continue
+            profile.achievements.append(
+                CandidateAchievement(
+                    company=job.company_name or "",
+                    text=achievement,
+                    metric=_metric_value_from_snippet(achievement),
+                    evidence=achievement,
+                    source="resume/llm_extraction",
+                )
+            )
+            profile.evidence.achievements.append(achievement)
+            existing.add(key)
+
+
+def _find_best_job_for_snippet(snippet: str, profile: CandidateProfile, resume_text: str) -> Optional[CandidateJob]:
+    snippet_key = normalize_text_for_compare(snippet)
+    guessed_company = normalize_text_for_compare(_guess_company_for_snippet(snippet, profile, resume_text))
+    for job in profile.jobs:
+        if guessed_company and job.company_name and guessed_company == normalize_text_for_compare(job.company_name):
+            return job
+        job_text = normalize_text_for_compare(" ".join(filter(None, [job.company_name, job.position, job.period])))
+        if job.company_name and normalize_text_for_compare(job.company_name) in snippet_key:
+            return job
+        if job_text and any(part and part in snippet_key for part in job_text.split()[:3]):
+            return job
+    return None
+
+
 def enrich_candidate_profile_with_sections(profile: CandidateProfile, preview: ResumeSectionPreview) -> CandidateProfile:
     if profile.target_role and not preview.section_texts.get("desired_role"):
         profile.ambiguities.append("Target role inferred from resume header")
@@ -1263,6 +1499,8 @@ def normalize_candidate_profile(
     _normalize_skills(profile, resume_text)
     _normalize_certifications(profile)
     _sanity_check_experience(profile, resume_text)
+    _sync_job_achievements_to_profile(profile)
+    _add_metric_fallback_achievements(profile, resume_text)
 
     profile.evidence, profile.provenance = build_evidence_package(resume_text, profile, preview)
     profile.confidence = derive_confidence(profile, resume_text, preview)
@@ -1840,6 +2078,8 @@ def derive_confidence(
         achievements_missing = achievement_signal_present and any(not job.achievements for job in profile.jobs)
         if weak_jobs or achievements_missing:
             jobs_conf = "medium" if structurally_complete_jobs or jobs_conf == "high" else "low"
+        if profile.achievements and jobs_conf == "low":
+            jobs_conf = "medium"
 
     skills_conf = "low"
     if profile.skills_hard:
@@ -1902,6 +2142,8 @@ def derive_confidence(
     elif avg_score >= 0.9:
         overall = "medium"
     if usable_profile and overall == "low":
+        overall = "medium"
+    if profile.achievements and overall == "low" and (profile.jobs or profile.skills_hard):
         overall = "medium"
 
     return ConfidenceBlock(

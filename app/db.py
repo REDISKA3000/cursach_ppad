@@ -38,6 +38,13 @@ def _ensure_mvp_columns():
     if "updated_at" not in user_columns:
         statements.append("ALTER TABLE users ADD COLUMN updated_at DATETIME")
 
+    if "resume_adaptations" in table_names:
+        adaptation_columns = {column["name"] for column in inspector.get_columns("resume_adaptations")}
+        if "vacancy_source_type" not in adaptation_columns:
+            statements.append("ALTER TABLE resume_adaptations ADD COLUMN vacancy_source_type VARCHAR(50) DEFAULT 'text'")
+        if "vacancy_source_url" not in adaptation_columns:
+            statements.append("ALTER TABLE resume_adaptations ADD COLUMN vacancy_source_url VARCHAR(1000)")
+
     if not statements:
         return
 

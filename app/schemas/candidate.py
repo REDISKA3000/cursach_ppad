@@ -40,6 +40,7 @@ class CandidateEvidenceBlock(BaseModel):
     skills_section: List[str] = Field(default_factory=list)
     education: List[str] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=list)
+    achievements: List[str] = Field(default_factory=list)
     jobs: List[CandidateJobEvidenceItem] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -66,7 +67,7 @@ class CandidateEvidenceBlock(BaseModel):
                 {"job_id": job_id, "company": [], "position": [], "period": [], "highlights": []},
             )
             if field_name in {"responsibilities", "achievements", "skills_used"}:
-                item["highlights"].extend(_coerce_snippet_list(snippets)[:2])
+                item["highlights"].extend(_coerce_snippet_list(snippets))
             elif field_name in item:
                 item[field_name].extend(_coerce_snippet_list(snippets))
 
@@ -76,10 +77,11 @@ class CandidateEvidenceBlock(BaseModel):
             "skills_section": _coerce_snippet_list(value.get("skills_section") or value.get("skills_hard")),
             "education": _coerce_snippet_list(value.get("education")),
             "languages": _coerce_snippet_list(value.get("languages")),
+            "achievements": _coerce_snippet_list(value.get("achievements")),
             "jobs": list(jobs_by_id.values()),
         }
 
-    @field_validator("target_role", "total_experience", "skills_section", "education", "languages", mode="before")
+    @field_validator("target_role", "total_experience", "skills_section", "education", "languages", "achievements", mode="before")
     @classmethod
     def _coerce_global_snippets(cls, value: Any) -> List[str]:
         return _coerce_snippet_list(value)
@@ -128,6 +130,7 @@ class CandidateEvidenceBlock(BaseModel):
             "skills_hard": list(self.skills_section),
             "education": list(self.education),
             "languages": list(self.languages),
+            "achievements": list(self.achievements),
         }
         for job in self.jobs:
             result[f"job_{job.job_id}_company"] = list(job.company)
@@ -170,6 +173,16 @@ class LanguageItem(BaseModel):
     level: Optional[str] = None
 
 
+class CandidateAchievement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company: str = ""
+    text: str = ""
+    metric: str = ""
+    evidence: str = ""
+    source: str = "resume/llm_extraction"
+
+
 class ConfidenceBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -195,6 +208,7 @@ class CandidateCanonicalProfile(BaseModel):
     education: List[EducationItem] = Field(default_factory=list)
     languages: List[LanguageItem] = Field(default_factory=list)
     certifications: List[str] = Field(default_factory=list)
+    achievements: List[CandidateAchievement] = Field(default_factory=list)
 
     @field_validator("languages", mode="before")
     @classmethod
@@ -247,6 +261,7 @@ class CandidateProfileV2(BaseModel):
             "education",
             "languages",
             "certifications",
+            "achievements",
         }
         if not any(key in data for key in legacy_keys):
             return data
@@ -262,6 +277,7 @@ class CandidateProfileV2(BaseModel):
             "education": data.get("education", []),
             "languages": data.get("languages", []),
             "certifications": data.get("certifications", []),
+            "achievements": data.get("achievements", []),
         }
         return {
             "canonical_profile": canonical,
@@ -318,6 +334,7 @@ class CandidateProfileV2(BaseModel):
             "skills_soft",
             "education",
             "certifications",
+            "achievements",
         }:
             return getattr(self.canonical_profile, name)
         if name == "languages":
@@ -338,6 +355,7 @@ class CandidateProfileV2(BaseModel):
             "skills_soft",
             "education",
             "certifications",
+            "achievements",
         } and "canonical_profile" in self.__dict__:
             setattr(self.__dict__["canonical_profile"], name, value)
             return
@@ -355,6 +373,7 @@ class CandidateProfileV2(BaseModel):
             "education": [item.model_dump() for item in self.education],
             "languages": self.languages,
             "certifications": list(self.certifications),
+            "achievements": [item.model_dump() for item in self.achievements],
             "raw_warnings": list(self.raw_warnings),
         }
 

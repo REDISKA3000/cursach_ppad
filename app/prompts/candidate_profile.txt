@@ -54,6 +54,10 @@ skill1; skill2
 [CERTIFICATIONS]
 certification1; certification2
 
+[ACHIEVEMENTS]
+1 | company | achievement_text | metric | evidence_snippet
+2 | company | achievement_text | metric | evidence_snippet
+
 [AMBIGUITIES]
 - ...
 - ...
@@ -71,8 +75,30 @@ Rules:
 6. Job entries must come only from actual work-experience blocks.
 7. If you extract N jobs, output [JOB_1] through [JOB_N].
 8. Do not omit later jobs for brevity.
-9. highlights must be 1-2 short factual raw lines from the corresponding job block.
-10. Keep output deterministic and compact.
+9. For each job, extract ALL professionally relevant factual signals from the job block.
+10. Do not limit highlights to 1-2 lines if the job block contains multiple important facts.
+11. If one resume bullet contains several distinct facts, split them into separate extracted items.
+12. Always preserve career-critical facts that show the candidate's value, scale, responsibility, complexity, or impact.
+
+Career-critical facts include, but are not limited to:
+- measurable outcomes and quantified achievements;
+- business or operational impact;
+- scale of work;
+- scope of responsibility and ownership areas;
+- stakeholder level;
+- tools, methods, systems, and technologies;
+- domain-specific expertise explicitly present in the resume.
+
+13. When a resume bullet contains multiple career-critical facts, split them into separate highlight items instead of compressing them into one generic sentence. Preserve the original meaning and wording as much as possible.
+
+
+14. Quantified achievements and business outcomes have higher priority than generic responsibilities.
+
+15. Do not generalize specific facts into vague wording.
+
+For example, do not replace "reduced processing time by 40%" with "improved processes".
+16. Keep original meaning and do not invent.
+17. Keep output deterministic and compact, but do not compress away career-critical facts.
 
 Field rules:
 - [TARGET_ROLE]: desired role or resume headline if explicit.
@@ -85,6 +111,7 @@ Field rules:
 - education status must be one of completed, incomplete, unknown.
 - [LANGUAGES]: one row per language using "language | level"; leave level blank if absent.
 - [CERTIFICATIONS]: semicolon-separated certification names.
+- [ACHIEVEMENTS]: one row per quantified achievement using "index | company | achievement_text | metric | evidence_snippet".
 - [AMBIGUITIES]: short bullets for inferred or uncertain fields.
 - [WARNINGS]: short bullets for missing or suspicious extraction areas.
 
@@ -93,7 +120,17 @@ Job rules:
 - company_type: explicit nearby domain/context only, such as bank, retail, e-commerce, SaaS, agency, telecom, consulting; otherwise blank.
 - position: raw title line if present.
 - period: raw date/period line if present.
-- highlights: raw bullets/lines from the same job block that support responsibilities, achievements, tools, or domain context.
+- highlights: raw facts from the same job block that support responsibilities, achievements, tools, metrics, methods, stakeholders, or domain context.
+- Split dense resume bullets into separate highlight items when they contain multiple facts.
+- Preserve facts about metric analysis, DAU/MAU, conversion funnels, A/B tests, product hypotheses, ad-hoc analytics, dashboards, data marts, ETL, teams, management, stakeholders, and C-level interaction.
+
+Achievement rules:
+- Extract all quantified achievements from the full resume.
+- Include achievements with %, "в X раз", DAU/MAU, conversion, revenue, costs, time, speed, quality, retention, funnel, sales, cross-sales.
+- If achievement belongs to a specific job, include the company name.
+- Use exact or near-exact wording from the resume.
+- Do not invent metrics.
+- If no achievements are present, leave [ACHIEVEMENTS] blank.
 
 Detected section preview:
 {section_preview}

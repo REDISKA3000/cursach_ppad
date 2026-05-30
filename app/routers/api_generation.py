@@ -3,14 +3,20 @@ import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, Body, Depends, HTTPException, File, UploadFile, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.config import UPLOADS_DIR, EXPORTS_DIR
 from app.db import get_db
 from app.repositories.conversations import ConversationRepository
-from app.repositories.resumes import ResumeAdaptationRepository, ResumeRepository, SourceResumeRepository
+from app.repositories.resumes import (
+    ExternalVacancyRepository,
+    JobBoardVacancyRepository,
+    ResumeAdaptationRepository,
+    ResumeRepository,
+    SourceResumeRepository,
+)
 from app.repositories.users import UserRepository
 from app.schemas.candidate import CandidateProfile
 from app.schemas.resume import GeneratedResume, TechnicalReport
@@ -21,6 +27,8 @@ from app.services.export_service import ExportService
 from app.services.file_parser import FileParser
 from app.services.auth_service import get_current_user
 from app.services.orchestration import OrchestrationService
+from app.services.vacancy_fetcher import VacancyFetchError, fetch_vacancy_from_url
+from app.services.vacancy_recommendations import recommended_vacancies_for_source
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -95,6 +103,52 @@ def _source_resume_payload(source) -> dict:
     }
 
 
+def _manual_candidate_profile_raw_text(profile: CandidateProfile) -> str:
+    """Build a readable source snapshot for manually created candidate profiles."""
+    lines: list[str] = []
+    if profile.target_role:
+        lines.extend(["Целевая роль", profile.target_role, ""])
+    if profile.experience_months:
+        years = profile.experience_months // 12
+        months = profile.experience_months % 12
+        experience_parts = []
+        if years:
+            experience_parts.append(f"{years} г.")
+        if months:
+            experience_parts.append(f"{months} мес.")
+        lines.extend(["Опыт", " ".join(experience_parts), ""])
+    if profile.summary_raw:
+        lines.extend(["Сводка", profile.summary_raw, ""])
+
+    if profile.jobs:
+        lines.append("Опыт работы")
+        for job in profile.jobs:
+            lines.append(" | ".join([part for part in [job.company_name, job.position, job.period] if part]))
+            for item in [*job.achievements, *job.responsibilities]:
+                lines.append(f"- {item}")
+            if job.skills_used:
+                lines.append(f"Навыки: {'; '.join(job.skills_used)}")
+            lines.append("")
+
+    if profile.skills_hard:
+        lines.extend(["Hard skills", "; ".join(profile.skills_hard), ""])
+    if profile.skills_soft:
+        lines.extend(["Soft skills", "; ".join(profile.skills_soft), ""])
+    if profile.education:
+        lines.append("Образование")
+        for item in profile.education:
+            lines.append(" | ".join([part for part in [item.institution, item.degree, item.field, item.year, item.status] if part]))
+        lines.append("")
+    if profile.languages:
+        lines.extend(["Языки", "; ".join(profile.languages), ""])
+    if profile.achievements:
+        lines.append("Достижения")
+        for item in profile.achievements:
+            lines.append(" | ".join([part for part in [item.company, item.text, item.metric] if part]))
+
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
 def _adaptation_summary(adaptation) -> str:
     strategy = adaptation.strategy_brief_json or {}
     report = adaptation.technical_report_json or {}
@@ -119,12 +173,16 @@ def _adaptation_payload(adaptation, include_details: bool = False) -> dict:
         "status": adaptation.status,
         "fit_score": adaptation.fit_score,
         "company_name": adaptation.company_name,
+        "vacancy_source_type": adaptation.vacancy_source_type or "text",
+        "vacancy_source_url": adaptation.vacancy_source_url or "",
         "created_at": adaptation.created_at.isoformat() if adaptation.created_at else "",
         "updated_at": adaptation.updated_at.isoformat() if adaptation.updated_at else "",
     }
     if include_details:
         payload.update({
             "vacancy_text": adaptation.vacancy_text,
+            "vacancy_source_type": adaptation.vacancy_source_type or "text",
+            "vacancy_source_url": adaptation.vacancy_source_url or "",
             "vacancy_profile": adaptation.vacancy_profile_json or {},
             "strategy_brief": adaptation.strategy_brief_json or {},
             "generated_resume": {
@@ -134,6 +192,47 @@ def _adaptation_payload(adaptation, include_details: bool = False) -> dict:
             },
             "technical_report": adaptation.technical_report_json or {},
         })
+    return payload
+
+
+def _external_vacancy_payload(vacancy, include_details: bool = False) -> dict:
+    payload = {
+        "id": vacancy.id,
+        "source": vacancy.source or "",
+        "source_url": vacancy.source_url or "",
+        "title": vacancy.title or "Вакансия",
+        "company": vacancy.company or "",
+        "location": vacancy.location or "",
+        "salary": vacancy.salary or "",
+        "description": vacancy.description or "",
+        "summary": (vacancy.description or "")[:280],
+        "created_at": vacancy.created_at.isoformat() if vacancy.created_at else "",
+        "updated_at": vacancy.updated_at.isoformat() if vacancy.updated_at else "",
+    }
+    if include_details:
+        payload["normalized_text"] = vacancy.normalized_text or ""
+    return payload
+
+
+def _job_board_vacancy_payload(vacancy, *, score: float = None, reason: str = "", include_details: bool = False) -> dict:
+    payload = {
+        "id": vacancy.id,
+        "source": vacancy.source or "",
+        "source_url": vacancy.source_url or "",
+        "title": vacancy.title or "Вакансия",
+        "company": vacancy.company or "",
+        "location": vacancy.location or "",
+        "salary": vacancy.salary or "",
+        "description": vacancy.description or "",
+        "summary": (vacancy.description or "")[:280],
+        "score": score,
+        "reason": reason,
+        "created_at": vacancy.created_at.isoformat() if vacancy.created_at else "",
+        "updated_at": vacancy.updated_at.isoformat() if vacancy.updated_at else "",
+    }
+    if include_details:
+        payload["normalized_text"] = vacancy.normalized_text or ""
+        payload["tags"] = vacancy.tags_json or []
     return payload
 
 
@@ -321,6 +420,146 @@ async def source_resume_from_text(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/source-resume/edit")
+async def get_source_resume_for_edit(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return current source resume data for prefilled manual edit form."""
+    source = SourceResumeRepository.get_current(db, current_user.id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Базовое резюме ещё не создано")
+    return {
+        "status": "ok",
+        "source_of_truth": "candidate_profile_json",
+        "source_resume": _source_resume_payload(source),
+    }
+
+
+async def _save_manual_source_resume(
+    payload: dict,
+    db: Session,
+    current_user: User,
+):
+    """Create/update source resume from a manually filled CandidateProfile form."""
+    try:
+        profile_payload = payload.get("candidate_profile") or payload
+        candidate_profile = CandidateProfile.model_validate(profile_payload)
+        if not (
+            candidate_profile.target_role
+            or candidate_profile.jobs
+            or candidate_profile.skills_hard
+            or candidate_profile.education
+        ):
+            raise HTTPException(status_code=400, detail="Заполните хотя бы роль, опыт, навыки или образование")
+
+        raw_text = str(payload.get("raw_text") or "").strip() or _manual_candidate_profile_raw_text(candidate_profile)
+        source = SourceResumeRepository.upsert_current(
+            db,
+            current_user.id,
+            raw_text,
+            candidate_profile.model_dump(),
+            file_name="Создано вручную",
+        )
+        return {"status": "ok", "source_resume": _source_resume_payload(source)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving manual source resume: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/source-resume/manual")
+async def source_resume_from_manual_profile(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create source resume from a manually filled CandidateProfile form."""
+    return await _save_manual_source_resume(payload, db, current_user)
+
+
+@router.put("/api/source-resume/manual")
+async def update_source_resume_from_manual_profile(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update existing source resume from a manually edited CandidateProfile form."""
+    source = SourceResumeRepository.get_current(db, current_user.id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Базовое резюме ещё не создано")
+    return await _save_manual_source_resume(payload, db, current_user)
+
+
+@router.post("/api/vacancy/fetch")
+async def fetch_vacancy(
+    url: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch a single vacancy page and return normalized text for adaptation creation."""
+    try:
+        fetched = fetch_vacancy_from_url(url)
+        external_vacancy = ExternalVacancyRepository.create_or_update(
+            db,
+            user_id=current_user.id,
+            source=fetched.source_type or fetched.source_domain,
+            source_url=fetched.url,
+            title=fetched.title,
+            company=fetched.company,
+            location=fetched.location,
+            salary=fetched.salary,
+            description=fetched.description,
+            normalized_text=fetched.normalized_text,
+        )
+        return {
+            "success": True,
+            "source_type": fetched.source_type,
+            "external_vacancy": _external_vacancy_payload(external_vacancy, include_details=True),
+            "title": fetched.title,
+            "company": fetched.company,
+            "location": fetched.location,
+            "salary": fetched.salary,
+            "description": fetched.description,
+            "normalized_text": fetched.normalized_text,
+            "warnings": fetched.warnings,
+            "source_domain": fetched.source_domain,
+            "url": fetched.url,
+        }
+    except VacancyFetchError as e:
+        return {
+            "success": False,
+            "source_type": "",
+            "error_code": e.error_code,
+            "message": e.message,
+            "fallback": e.fallback,
+            "title": "",
+            "company": "",
+            "description": "",
+            "normalized_text": "",
+            "warnings": [e.message],
+            "source_domain": "",
+            "url": url,
+        }
+    except Exception as e:
+        logger.error(f"Error fetching vacancy URL: {e}")
+        return {
+            "success": False,
+            "source_type": "",
+            "error_code": "vacancy_fetch_failed",
+            "message": "Не удалось получить вакансию по ссылке. Вставьте текст вакансии вручную.",
+            "fallback": "manual_text",
+            "title": "",
+            "company": "",
+            "description": "",
+            "normalized_text": "",
+            "warnings": ["Не удалось получить вакансию по ссылке. Вставьте текст вакансии вручную."],
+            "source_domain": "",
+            "url": url,
+        }
+
+
 @router.post("/api/analyze/preview")
 async def analyze_preview(
     resume_text: str = Form(...),
@@ -435,10 +674,184 @@ async def list_adaptations(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/external-vacancies")
+async def list_external_vacancies(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List user's saved external vacancies for the recommendations rail."""
+    try:
+        vacancies = ExternalVacancyRepository.list_for_user(db, current_user.id)
+        return {
+            "status": "ok",
+            "vacancies": [_external_vacancy_payload(item) for item in vacancies],
+        }
+    except Exception as e:
+        logger.error(f"Error listing external vacancies: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/recommended-vacancies")
+async def list_recommended_vacancies(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return ranked vacancies from the shared OpenHunt/GetMatch backend pool."""
+    try:
+        source = SourceResumeRepository.get_current(db, current_user.id)
+        if not source:
+            raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
+        ranked = recommended_vacancies_for_source(db, source)
+        return {
+            "status": "ok",
+            "vacancies": [
+                _job_board_vacancy_payload(item["vacancy"], score=item["score"], reason=item["reason"])
+                for item in ranked
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing recommended vacancies: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/recommended-vacancies/{vacancy_id}")
+async def get_recommended_vacancy(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get one vacancy from the shared recommendation pool."""
+    try:
+        source = SourceResumeRepository.get_current(db, current_user.id)
+        if not source:
+            raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
+        vacancy = JobBoardVacancyRepository.get(db, vacancy_id)
+        if not vacancy:
+            raise HTTPException(status_code=404, detail="Vacancy not found")
+        return {"status": "ok", "vacancy": _job_board_vacancy_payload(vacancy, include_details=True)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting recommended vacancy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/recommended-vacancies/{vacancy_id}/adapt")
+async def adapt_recommended_vacancy(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create adaptation from a shared pool vacancy snapshot without refetching URL."""
+    try:
+        source = SourceResumeRepository.get_current(db, current_user.id)
+        if not source:
+            raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
+
+        vacancy = JobBoardVacancyRepository.get(db, vacancy_id)
+        if not vacancy:
+            raise HTTPException(status_code=404, detail="Vacancy not found")
+
+        vacancy_text = vacancy.normalized_text or vacancy.description or ""
+        if not vacancy_text.strip():
+            raise HTTPException(status_code=400, detail="В вакансии нет текста для адаптации")
+
+        vacancy_profile, strategy_brief, generated_resume = _run_adaptation_pipeline(source, vacancy_text)
+        title = generated_resume.title or vacancy_profile.role or vacancy.title or "Адаптированное резюме"
+        adaptation = ResumeAdaptationRepository.create(
+            db,
+            user_id=current_user.id,
+            source_resume_id=source.id,
+            title=title,
+            vacancy_text=vacancy_text,
+            vacancy_profile_json=vacancy_profile.model_dump(),
+            strategy_brief_json=strategy_brief.model_dump(),
+            generated_resume_text=generated_resume.resume_text,
+            technical_report_json=generated_resume.technical_report.model_dump(),
+            fit_score=strategy_brief.fit_score,
+            company_name=vacancy.company,
+            vacancy_source_type=vacancy.source or "recommended",
+            vacancy_source_url=vacancy.source_url,
+        )
+        return {"status": "ok", "adaptation": _adaptation_payload(adaptation, include_details=True)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adapting recommended vacancy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/external-vacancies/{vacancy_id}")
+async def get_external_vacancy(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get one saved external vacancy."""
+    try:
+        vacancy = ExternalVacancyRepository.get(db, vacancy_id)
+        if not vacancy or vacancy.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Vacancy not found")
+        return {"status": "ok", "vacancy": _external_vacancy_payload(vacancy, include_details=True)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting external vacancy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/external-vacancies/{vacancy_id}/adapt")
+async def adapt_external_vacancy(
+    vacancy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create adaptation from a saved vacancy snapshot without refetching URL."""
+    try:
+        source = SourceResumeRepository.get_current(db, current_user.id)
+        if not source:
+            raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
+
+        vacancy = ExternalVacancyRepository.get(db, vacancy_id)
+        if not vacancy or vacancy.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Vacancy not found")
+
+        vacancy_text = vacancy.normalized_text or vacancy.description or ""
+        if not vacancy_text.strip():
+            raise HTTPException(status_code=400, detail="В сохранённой вакансии нет текста для адаптации")
+
+        vacancy_profile, strategy_brief, generated_resume = _run_adaptation_pipeline(source, vacancy_text)
+        title = generated_resume.title or vacancy_profile.role or vacancy.title or "Адаптированное резюме"
+        adaptation = ResumeAdaptationRepository.create(
+            db,
+            user_id=current_user.id,
+            source_resume_id=source.id,
+            title=title,
+            vacancy_text=vacancy_text,
+            vacancy_profile_json=vacancy_profile.model_dump(),
+            strategy_brief_json=strategy_brief.model_dump(),
+            generated_resume_text=generated_resume.resume_text,
+            technical_report_json=generated_resume.technical_report.model_dump(),
+            fit_score=strategy_brief.fit_score,
+            company_name=vacancy.company,
+            vacancy_source_type="url" if vacancy.source_url else "saved",
+            vacancy_source_url=vacancy.source_url,
+        )
+        return {"status": "ok", "adaptation": _adaptation_payload(adaptation, include_details=True)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adapting external vacancy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/adaptations")
 async def create_adaptation(
     vacancy_text: str = Form(""),
-    file: Optional[UploadFile] = File(None),
+    vacancy_source_type: str = Form("text"),
+    vacancy_source_url: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -448,10 +861,13 @@ async def create_adaptation(
         if not source:
             raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
 
-        if file:
-            file_content = await file.read()
-            _, parsed_text = _save_upload_to_text(file, file_content)
-            vacancy_text = parsed_text or vacancy_text
+        source_type = "url" if vacancy_source_type == "url" and vacancy_source_url else "text"
+        if source_type == "url" and not vacancy_text.strip():
+            try:
+                fetched = fetch_vacancy_from_url(vacancy_source_url)
+                vacancy_text = fetched.normalized_text
+            except VacancyFetchError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
         if not vacancy_text or not vacancy_text.strip():
             raise HTTPException(status_code=400, detail="Добавьте текст вакансии")
@@ -469,6 +885,9 @@ async def create_adaptation(
             generated_resume_text=generated_resume.resume_text,
             technical_report_json=generated_resume.technical_report.model_dump(),
             fit_score=strategy_brief.fit_score,
+            company_name=getattr(vacancy_profile, "company", None),
+            vacancy_source_type=source_type,
+            vacancy_source_url=vacancy_source_url if source_type == "url" else None,
         )
         return {"status": "ok", "adaptation": _adaptation_payload(adaptation, include_details=True)}
     except HTTPException:

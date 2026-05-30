@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
-from app.models import ResumeAdaptation, ResumeGeneration, SourceResume
+from app.models import ExternalVacancy, JobBoardVacancy, ResumeAdaptation, ResumeGeneration, SourceResume
 import logging
 
 logger = logging.getLogger(__name__)
@@ -120,12 +120,16 @@ class ResumeAdaptationRepository:
         status: str = "completed",
         fit_score: float = None,
         company_name: str = None,
+        vacancy_source_type: str = "text",
+        vacancy_source_url: str = None,
     ) -> ResumeAdaptation:
         adaptation = ResumeAdaptation(
             user_id=user_id,
             source_resume_id=source_resume_id,
             title=title,
             vacancy_text=vacancy_text,
+            vacancy_source_type=vacancy_source_type,
+            vacancy_source_url=vacancy_source_url,
             vacancy_profile_json=vacancy_profile_json,
             strategy_brief_json=strategy_brief_json,
             generated_resume_text=generated_resume_text,
@@ -178,3 +182,161 @@ class ResumeAdaptationRepository:
             .order_by(ResumeAdaptation.created_at.desc())
             .all()
         )
+
+
+class ExternalVacancyRepository:
+    @staticmethod
+    def create_or_update(
+        db: Session,
+        *,
+        user_id: int,
+        source: str,
+        source_url: str,
+        title: str,
+        company: str = "",
+        location: str = "",
+        salary: str = "",
+        description: str = "",
+        normalized_text: str = "",
+    ) -> ExternalVacancy:
+        vacancy = (
+            db.query(ExternalVacancy)
+            .filter(
+                ExternalVacancy.user_id == user_id,
+                ExternalVacancy.source_url == source_url,
+            )
+            .first()
+        )
+        if vacancy:
+            vacancy.source = source
+            vacancy.title = title or vacancy.title
+            vacancy.company = company or vacancy.company
+            vacancy.location = location or vacancy.location
+            vacancy.salary = salary or vacancy.salary
+            vacancy.description = description or vacancy.description
+            vacancy.normalized_text = normalized_text or vacancy.normalized_text
+            vacancy.updated_at = datetime.utcnow()
+        else:
+            vacancy = ExternalVacancy(
+                user_id=user_id,
+                source=source,
+                source_url=source_url,
+                title=title,
+                company=company,
+                location=location,
+                salary=salary,
+                description=description,
+                normalized_text=normalized_text,
+            )
+            db.add(vacancy)
+
+        db.commit()
+        db.refresh(vacancy)
+        return vacancy
+
+    @staticmethod
+    def get(db: Session, vacancy_id: int) -> ExternalVacancy:
+        return db.query(ExternalVacancy).filter(ExternalVacancy.id == vacancy_id).first()
+
+    @staticmethod
+    def list_for_user(db: Session, user_id: int) -> list:
+        return (
+            db.query(ExternalVacancy)
+            .filter(ExternalVacancy.user_id == user_id)
+            .order_by(ExternalVacancy.updated_at.desc(), ExternalVacancy.created_at.desc())
+            .all()
+        )
+
+
+class JobBoardVacancyRepository:
+    @staticmethod
+    def upsert_by_url(
+        db: Session,
+        *,
+        source: str,
+        source_url: str,
+        title: str,
+        company: str = "",
+        location: str = "",
+        salary: str = "",
+        description: str = "",
+        normalized_text: str = "",
+        tags: list[str] = None,
+    ) -> JobBoardVacancy:
+        vacancy = (
+            db.query(JobBoardVacancy)
+            .filter(JobBoardVacancy.source_url == source_url)
+            .first()
+        )
+        if vacancy:
+            vacancy.source = source or vacancy.source
+            vacancy.title = title or vacancy.title
+            vacancy.company = company or vacancy.company
+            vacancy.location = location or vacancy.location
+            vacancy.salary = salary or vacancy.salary
+            vacancy.description = description or vacancy.description
+            vacancy.normalized_text = normalized_text or vacancy.normalized_text
+            vacancy.tags_json = tags or vacancy.tags_json
+            vacancy.collected_at = datetime.utcnow()
+            vacancy.updated_at = datetime.utcnow()
+        else:
+            vacancy = JobBoardVacancy(
+                source=source,
+                source_url=source_url,
+                title=title,
+                company=company,
+                location=location,
+                salary=salary,
+                description=description,
+                normalized_text=normalized_text,
+                tags_json=tags or [],
+                collected_at=datetime.utcnow(),
+            )
+            db.add(vacancy)
+
+        db.commit()
+        db.refresh(vacancy)
+        return vacancy
+
+    @staticmethod
+    def get(db: Session, vacancy_id: int) -> JobBoardVacancy:
+        return db.query(JobBoardVacancy).filter(JobBoardVacancy.id == vacancy_id).first()
+
+    @staticmethod
+    def count(db: Session) -> int:
+        return db.query(JobBoardVacancy).count()
+
+    @staticmethod
+    def latest_collected_at(db: Session):
+        vacancy = (
+            db.query(JobBoardVacancy)
+            .order_by(JobBoardVacancy.collected_at.desc(), JobBoardVacancy.updated_at.desc())
+            .first()
+        )
+        return vacancy.collected_at if vacancy else None
+
+    @staticmethod
+    def list_all(db: Session) -> list:
+        return (
+            db.query(JobBoardVacancy)
+            .order_by(JobBoardVacancy.collected_at.desc(), JobBoardVacancy.updated_at.desc())
+            .all()
+        )
+
+    @staticmethod
+    def delete_known_demo_rows(db: Session) -> int:
+        rows = (
+            db.query(JobBoardVacancy)
+            .filter(
+                JobBoardVacancy.source == "getmatch",
+                JobBoardVacancy.source_url.like("%34390-one-day-offer-dlia-data-science?s=offers%"),
+                JobBoardVacancy.company == "One Day Offer",
+            )
+            .all()
+        )
+        count = len(rows)
+        for row in rows:
+            db.delete(row)
+        if count:
+            db.commit()
+        return count
