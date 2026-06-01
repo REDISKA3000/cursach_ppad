@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 import os
 from app.db import SessionLocal, init_db
-from app.routers import pages, api_auth, api_chat, api_generation
+from app.routers import pages, api_auth, api_chat, api_generation, api_market
 from app.config import DEBUG, STATIC_DIR, VACANCY_POOL_AUTO_SYNC, VACANCY_POOL_MIN_SIZE, VACANCY_POOL_SYNC_LIMIT
 from app.services.vacancy_recommendations import start_getmatch_pool_sync_if_needed
 
@@ -48,6 +48,7 @@ app.include_router(pages.router)
 app.include_router(api_auth.router)
 app.include_router(api_chat.router)
 app.include_router(api_generation.router)
+app.include_router(api_market.router)
 
 # Mount static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
