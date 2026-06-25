@@ -13,17 +13,46 @@ class ExportService:
     @staticmethod
     def _resolve_unicode_font_path() -> str | None:
         """Pick a local TTF font with Cyrillic support for PDF export."""
+        explicit_path = os.getenv("RESUME_PDF_FONT_PATH", "").strip()
         candidates = [
+            explicit_path,
+            # Linux/Railway/common distro fonts.
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            # macOS local development fonts.
             "/Library/Fonts/Arial Unicode.ttf",
             "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
             "/Library/Fonts/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Helvetica.ttc",
         ]
 
         for path in candidates:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 return path
+
+        preferred_names = (
+            "DejaVuSans.ttf",
+            "NotoSans-Regular.ttf",
+            "NotoSerif-Regular.ttf",
+            "LiberationSans-Regular.ttf",
+            "FreeSans.ttf",
+            "Arial.ttf",
+        )
+        found_by_name = {}
+        for base_dir in ("/usr/share/fonts", "/usr/local/share/fonts"):
+            for root, _, files in os.walk(base_dir):
+                for file_name in files:
+                    if file_name in preferred_names and file_name not in found_by_name:
+                        found_by_name[file_name] = os.path.join(root, file_name)
+
+        for font_name in preferred_names:
+            if font_name in found_by_name:
+                return found_by_name[font_name]
 
         return None
     
@@ -55,12 +84,16 @@ class ExportService:
             story = []
             
             styles = getSampleStyleSheet()
-            font_name = "Helvetica"
             font_path = ExportService._resolve_unicode_font_path()
-            if font_path:
-                font_name = "ResumeUnicode"
-                if font_name not in pdfmetrics.getRegisteredFontNames():
-                    pdfmetrics.registerFont(TTFont(font_name, font_path))
+            if not font_path:
+                raise RuntimeError(
+                    "No Unicode TTF font found for PDF export. "
+                    "Install DejaVu/Noto/Liberation fonts or set RESUME_PDF_FONT_PATH."
+                )
+
+            font_name = "ResumeUnicode"
+            if font_name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
 
             title_style = ParagraphStyle(
                 'CustomTitle',
@@ -114,9 +147,8 @@ class ExportService:
             buffer.seek(0)
             return buffer.getvalue()
         except Exception as e:
-            logger.error(f"Failed to generate PDF: {e}")
-            # Fallback: return text as UTF-8 encoded bytes
-            return generated_resume.resume_text.encode('utf-8')
+            logger.exception("Failed to generate PDF")
+            raise RuntimeError("Failed to generate PDF") from e
     
     @staticmethod
     def format_json_nicely(data: dict) -> str:
