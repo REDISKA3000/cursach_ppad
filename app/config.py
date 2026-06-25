@@ -37,7 +37,7 @@ CANDIDATE_EVIDENCE_VALIDATION_ENABLED = os.getenv(
 VACANCY_POOL_AUTO_SYNC = os.getenv("VACANCY_POOL_AUTO_SYNC", "true").lower() == "true"
 VACANCY_POOL_MIN_SIZE = int(os.getenv("VACANCY_POOL_MIN_SIZE", "100"))
 _vacancy_pool_limit = os.getenv("VACANCY_POOL_SYNC_LIMIT", "").strip()
-VACANCY_POOL_SYNC_LIMIT = int(_vacancy_pool_limit) if _vacancy_pool_limit else None
+VACANCY_POOL_SYNC_LIMIT = int(_vacancy_pool_limit) if _vacancy_pool_limit else 40
 
 # Paths
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

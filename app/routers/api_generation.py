@@ -28,7 +28,7 @@ from app.services.file_parser import FileParser
 from app.services.auth_service import get_current_user
 from app.services.orchestration import OrchestrationService
 from app.services.vacancy_fetcher import VacancyFetchError, fetch_vacancy_from_url
-from app.services.vacancy_recommendations import recommended_vacancies_for_source
+from app.services.vacancy_recommendations import ingest_getmatch_vacancies, recommended_vacancies_for_source
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -701,6 +701,19 @@ async def list_recommended_vacancies(
         source = SourceResumeRepository.get_current(db, current_user.id)
         if not source:
             raise HTTPException(status_code=400, detail="Сначала загрузите базовое резюме")
+        if JobBoardVacancyRepository.count(db) == 0:
+            try:
+                result = ingest_getmatch_vacancies(db, limit=12, commit=True)
+                logger.info(
+                    "Vacancy pool filled on demand: total_from_api=%s discovered=%s saved=%s skipped=%s failed=%s",
+                    result.total_from_api,
+                    result.discovered,
+                    result.saved,
+                    result.skipped,
+                    result.failed,
+                )
+            except Exception:
+                logger.exception("Vacancy pool on-demand sync failed")
         ranked = recommended_vacancies_for_source(db, source)
         return {
             "status": "ok",
